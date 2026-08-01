@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:bt_torrent/core/models/download_task.dart';
 import 'package:bt_torrent/providers/download_providers.dart';
 
@@ -57,6 +60,7 @@ class DownloadListScreen extends ConsumerWidget {
                         'fileIndex': '${videoFiles.first.index}',
                       });
                 },
+                onShare: () => _shareTask(context, task),
                 onPauseResume: () {
                   if (task.status == DownloadStatus.downloading) {
                     ref.read(pauseDownloadAction).execute(task.infoHash);
@@ -93,12 +97,44 @@ class DownloadListScreen extends ConsumerWidget {
       ),
     );
   }
+
+  /// 分享已完成任务的文件（优先公共下载目录，回退私有目录）
+  Future<void> _shareTask(BuildContext context, DownloadTask task) async {
+    final file = task.files.isNotEmpty
+        ? task.files.first
+        : null;
+    if (file == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('没有可分享的文件')),
+      );
+      return;
+    }
+
+    final publicPath = '/storage/emulated/0/Download/${file.name}';
+    final privatePath = '${task.savePath}/${file.path}';
+    final path =
+        File(publicPath).existsSync() ? publicPath : privatePath;
+
+    try {
+      await SharePlus.instance.share(ShareParams(
+        files: [XFile(path)],
+        text: task.name,
+      ));
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('分享失败: $e')),
+        );
+      }
+    }
+  }
 }
 
 class _DownloadItem extends StatelessWidget {
   final DownloadTask task;
   final VoidCallback onTap;
   final VoidCallback onPlay;
+  final VoidCallback onShare;
   final VoidCallback onPauseResume;
   final VoidCallback onRemove;
 
@@ -106,6 +142,7 @@ class _DownloadItem extends StatelessWidget {
     required this.task,
     required this.onTap,
     required this.onPlay,
+    required this.onShare,
     required this.onPauseResume,
     required this.onRemove,
   });
@@ -220,16 +257,25 @@ class _DownloadItem extends StatelessWidget {
                       visualDensity: VisualDensity.compact,
                     )
                   else
-                  IconButton(
-                    icon: Icon(
-                      task.status == DownloadStatus.downloading
-                          ? Icons.pause
-                          : Icons.play_arrow,
-                      size: 22,
+                    IconButton(
+                      icon: Icon(
+                        task.status == DownloadStatus.downloading
+                            ? Icons.pause
+                            : Icons.play_arrow,
+                        size: 22,
+                      ),
+                      onPressed: onPauseResume,
+                      visualDensity: VisualDensity.compact,
                     ),
-                    onPressed: onPauseResume,
-                    visualDensity: VisualDensity.compact,
-                  ),
+                  // 已完成：分享按钮
+                  if (isComplete)
+                    IconButton(
+                      icon: const Icon(Icons.share,
+                          size: 20, color: Colors.blueGrey),
+                      tooltip: '分享文件',
+                      onPressed: onShare,
+                      visualDensity: VisualDensity.compact,
+                    ),
                 ],
               ),
             ],

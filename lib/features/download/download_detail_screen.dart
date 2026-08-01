@@ -20,7 +20,10 @@ class DownloadDetailScreen extends ConsumerWidget {
       appBar: AppBar(title: const Text('下载详情')),
       body: progressAsync.when(
         data: (task) {
-          final files = filesAsync.value ?? task.files;
+          // 优先任务自带文件列表（本地清单），原生引擎拉取仅作补充
+          final files = (filesAsync.value?.isNotEmpty ?? false)
+              ? filesAsync.value!
+              : task.files;
           final isComplete = task.status == DownloadStatus.completed ||
               task.status == DownloadStatus.seeding ||
               task.progress >= 1.0;
@@ -79,7 +82,7 @@ class DownloadDetailScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 16),
 
-              // Peer 信息
+              // 连接信息：下载中实时显示，完成后提示已结束
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
@@ -89,13 +92,31 @@ class DownloadDetailScreen extends ConsumerWidget {
                       Text('连接信息',
                           style: theme.textTheme.titleSmall),
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          _InfoItem('Peers', '${task.connectedPeers}'),
-                          _InfoItem('Seeds', '${task.connectedSeeds}'),
-                          _InfoItem('上传', task.uploadBytes.humanReadableSize),
-                        ],
-                      ),
+                      if (isComplete)
+                        Row(
+                          children: [
+                            Icon(Icons.check_circle,
+                                size: 18, color: Colors.green),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '下载已结束，文件已保存到"下载"目录',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          ],
+                        )
+                      else
+                        Row(
+                          children: [
+                            _InfoItem('Peers', '${task.connectedPeers}'),
+                            _InfoItem('Seeds', '${task.connectedSeeds}'),
+                            _InfoItem(
+                                '上传', task.uploadBytes.humanReadableSize),
+                          ],
+                        ),
                     ],
                   ),
                 ),

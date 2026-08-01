@@ -51,8 +51,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   Future<void> _initPlayer() async {
     final task =
         ref.read(downloadProgressProvider(widget.infoHash)).valueOrNull;
-    final files =
+    // 优先任务自带文件列表（本地清单），原生引擎拉取仅作补充
+    final taskFiles = task?.files ?? const <TorrentFileInfo>[];
+    final engineFiles =
         ref.read(downloadFilesProvider(widget.infoHash)).valueOrNull ?? [];
+    final files = taskFiles.isNotEmpty ? taskFiles : engineFiles;
 
     if (task == null) {
       setState(() => _error = '未找到下载任务');
