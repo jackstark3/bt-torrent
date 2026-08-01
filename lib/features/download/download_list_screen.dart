@@ -139,7 +139,11 @@ class _DownloadItem extends StatelessWidget {
                   Text(task.speedFormatted,
                       style: theme.textTheme.bodySmall),
                   const SizedBox(width: 12),
-                  Text('ETA: ${task.etaFormatted}',
+                  Text(
+                    task.status == DownloadStatus.checking ||
+                            task.status == DownloadStatus.queued
+                        ? task.status.displayName
+                        : 'ETA: ${task.etaFormatted}',
                       style: theme.textTheme.bodySmall),
                   const Spacer(),
                   IconButton(

@@ -17,6 +17,9 @@ class DownloadRepositoryImpl implements DownloadRepository {
   final Map<String, StreamController<DownloadTask>> _controllers = {};
   final Map<String, DateTime> _addedAt = {};
   final Map<String, DownloadTask> _completedTasks = {};
+  final Map<String, DownloadTask> _restoringTasks = {};
+  final Map<String, double> _lastPersistedProgress = {};
+  final Map<String, DateTime> _lastPersistTime = {};
 
   static const _tasksKey = 'download_tasks';
 
@@ -53,6 +56,8 @@ class DownloadRepositoryImpl implements DownloadRepository {
     String? savePath,
     bool? completed,
     List<TorrentFileInfo>? files,
+    double? progress,
+    int? totalBytes,
   }) async {
     final tasks = await _loadPersistedTasks();
     final index = tasks.indexWhere((t) => t['infoHash'] == infoHash);
@@ -76,6 +81,8 @@ class DownloadRepositoryImpl implements DownloadRepository {
               })
           .toList();
     }
+    if (progress != null) map['progress'] = progress;
+    if (totalBytes != null) map['totalBytes'] = totalBytes;
     if (index >= 0) {
       tasks[index] = map;
     } else {
@@ -104,17 +111,27 @@ class DownloadRepositoryImpl implements DownloadRepository {
 
       if (map['completed'] == true) {
         // 已完成任务：文件已导出到公共下载目录
-        final task = _taskFromPersisted(map);
-        _completedTasks[infoHash] = task;
-        _controllers[infoHash]?.add(task);
+        _completedTasks[infoHash] = _taskFromPersisted(map);
       } else {
-        // 未完成任务：重新添加，libtorrent 会校验已有文件续传
-        await startDownload(magnetUri, savePath);
+        // 未完成任务：立即显示"恢复中"（含上次进度），后台并行续传
+        _restoringTasks[infoHash] = _taskFromPersisted(map, restoring: true);
+        unawaited(_restoreOne(magnetUri, savePath));
       }
     }
   }
 
-  DownloadTask _taskFromPersisted(Map<String, dynamic> map) {
+  /// 后台恢复单个任务（引擎校验已有文件后自动续传）
+  Future<void> _restoreOne(String magnetUri, String savePath) async {
+    final result = await startDownload(magnetUri, savePath);
+    if (result.isError) {
+      _logger.warning('恢复任务失败: ${result.error}');
+    }
+  }
+
+  DownloadTask _taskFromPersisted(
+    Map<String, dynamic> map, {
+    bool restoring = false,
+  }) {
     final files = (map['files'] as List<dynamic>? ?? [])
         .map((f) => TorrentFileInfo(
               index: f['index'] as int? ?? 0,
@@ -123,14 +140,18 @@ class DownloadRepositoryImpl implements DownloadRepository {
               sizeBytes: f['sizeBytes'] as int? ?? 0,
             ))
         .toList();
+    final filesTotal = files.fold<int>(0, (sum, f) => sum + f.sizeBytes);
+    final totalBytes = map['totalBytes'] as int? ?? filesTotal;
     return DownloadTask(
       infoHash: map['infoHash'] as String? ?? '',
       name: map['name'] as String? ?? '已完成下载',
       magnetUri: map['magnetUri'] as String?,
-      totalBytes: files.fold<int>(0, (sum, f) => sum + f.sizeBytes),
-      downloadedBytes: files.fold<int>(0, (sum, f) => sum + f.sizeBytes),
-      progress: 1.0,
-      status: DownloadStatus.completed,
+      totalBytes: totalBytes,
+      downloadedBytes: restoring
+          ? ((map['progress'] as num? ?? 0.0) * totalBytes).round()
+          : files.fold<int>(0, (sum, f) => sum + f.sizeBytes),
+      progress: restoring ? (map['progress'] as num? ?? 0.0).toDouble() : 1.0,
+      status: restoring ? DownloadStatus.checking : DownloadStatus.completed,
       files: files,
       addedAt: DateTime.tryParse(map['addedAt'] as String? ?? '') ?? DateTime.now(),
       savePath: map['savePath'] as String? ?? '',
@@ -155,6 +176,7 @@ class DownloadRepositoryImpl implements DownloadRepository {
     final now = DateTime.now();
     _addedAt[session.infoHash] = now;
     _completedTasks.remove(session.infoHash);
+    _restoringTasks.remove(session.infoHash);
 
     final task = _taskFromSession(session, now);
     final controller = StreamController<DownloadTask>.broadcast();
@@ -173,6 +195,7 @@ class DownloadRepositoryImpl implements DownloadRepository {
     // 订阅引擎进度/状态流
     session.progressStream.listen((progress) {
       _updateTask(_taskFromSession(session, now));
+      _maybePersistProgress(session);
     });
     session.statusStream.listen((status) async {
       _updateTask(_taskFromSession(session, now));
@@ -198,6 +221,24 @@ class DownloadRepositoryImpl implements DownloadRepository {
     );
     // 让 UI 能拿到已完成状态
     _updateTask(_taskFromSession(session, _addedAt[session.infoHash] ?? DateTime.now()));
+  }
+
+  /// 节流持久化进度（每 5% 或 10 秒写一次，重启后能显示上次进度）
+  Future<void> _maybePersistProgress(TorrentSession session) async {
+    final progress = session.currentProgress.progressPercent;
+    final last = _lastPersistedProgress[session.infoHash] ?? -1.0;
+    final lastTime = _lastPersistTime[session.infoHash] ?? DateTime(2000);
+    if ((progress - last) >= 0.05 ||
+        DateTime.now().difference(lastTime).inSeconds >= 10) {
+      _lastPersistedProgress[session.infoHash] = progress;
+      _lastPersistTime[session.infoHash] = DateTime.now();
+      await _upsertPersistedTask(
+        session.infoHash,
+        name: session.name,
+        progress: progress,
+        totalBytes: session.currentProgress.totalBytes,
+      );
+    }
   }
 
   @override
@@ -255,9 +296,18 @@ class DownloadRepositoryImpl implements DownloadRepository {
   @override
   Future<List<DownloadTask>> getAllDownloads() async {
     final now = DateTime.now();
-    final active =
-        _engine.getAllSessions().map((s) => _taskFromSession(s, now)).toList();
-    return [..._completedTasks.values, ...active];
+    final merged = <String, DownloadTask>{};
+    // 优先级：引擎实时任务 > 恢复中 > 已完成
+    for (final s in _engine.getAllSessions()) {
+      merged[s.infoHash] = _taskFromSession(s, now);
+    }
+    for (final e in _restoringTasks.entries) {
+      merged.putIfAbsent(e.key, () => e.value);
+    }
+    for (final e in _completedTasks.entries) {
+      merged.putIfAbsent(e.key, () => e.value);
+    }
+    return merged.values.toList();
   }
 
   @override
