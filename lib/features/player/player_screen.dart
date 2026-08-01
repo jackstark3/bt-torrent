@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 
@@ -25,7 +26,9 @@ class PlayerScreen extends ConsumerStatefulWidget {
 class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   VideoPlayerController? _controller;
   bool _showControls = true;
+  bool _isLandscape = false;
   String? _error;
+  String _fileName = '';
 
   @override
   void initState() {
@@ -35,6 +38,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   @override
   void dispose() {
+    // 退出播放器时恢复默认屏幕方向
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
     _controller?.dispose();
     super.dispose();
   }
@@ -59,6 +68,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       setState(() => _error = '所选文件不是视频');
       return;
     }
+    _fileName = file.name;
 
     final isComplete = task.status == DownloadStatus.completed ||
         task.status == DownloadStatus.seeding ||
@@ -109,6 +119,21 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     } else {
       controller.play();
       ref.read(playerStateProvider.notifier).resume();
+    }
+  }
+
+  /// 切换横竖屏
+  void _toggleOrientation() {
+    setState(() => _isLandscape = !_isLandscape);
+    if (_isLandscape) {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    } else {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+      ]);
     }
   }
 
@@ -179,6 +204,29 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                             icon: const Icon(Icons.arrow_back,
                                 color: Colors.white),
                             onPressed: () => Navigator.of(context).pop(),
+                          ),
+                          // 文件名
+                          Expanded(
+                            child: Text(
+                              _fileName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                          // 横竖屏切换
+                          IconButton(
+                            icon: Icon(
+                              _isLandscape
+                                  ? Icons.fullscreen_exit
+                                  : Icons.fullscreen,
+                              color: Colors.white,
+                            ),
+                            tooltip: _isLandscape ? '退出全屏' : '全屏',
+                            onPressed: _toggleOrientation,
                           ),
                           const Spacer(),
                           if (controller != null &&
