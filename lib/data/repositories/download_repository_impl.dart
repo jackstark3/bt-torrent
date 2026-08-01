@@ -271,26 +271,34 @@ class DownloadRepositoryImpl implements DownloadRepository {
 
   @override
   Stream<DownloadTask> watchProgress(String infoHash) {
-    final controller = _controllers[infoHash];
-    if (controller != null) return controller.stream;
+    final existing = _controllers[infoHash];
+    final controller = existing ?? _createController(infoHash);
 
-    // 已完成任务
+    // 先补发当前快照，再接实时推送，避免初始事件丢失导致一直 loading
+    return Stream.multi((listener) {
+      final current = _currentTask(infoHash);
+      if (current != null) listener.add(current);
+      controller.stream.listen(listener.add);
+    });
+  }
+
+  StreamController<DownloadTask> _createController(String infoHash) {
+    final controller = StreamController<DownloadTask>.broadcast();
+    _controllers[infoHash] = controller;
+    return controller;
+  }
+
+  /// 当前任务快照（已完成 > 引擎实时 > 恢复中）
+  DownloadTask? _currentTask(String infoHash) {
     final completed = _completedTasks[infoHash];
-    if (completed != null) {
-      final newController = StreamController<DownloadTask>.broadcast();
-      _controllers[infoHash] = newController;
-      newController.add(completed);
-      return newController.stream;
-    }
-
-    // 为已存在的任务创建新流
-    final newController = StreamController<DownloadTask>.broadcast();
-    _controllers[infoHash] = newController;
+    if (completed != null) return completed;
+    final restoring = _restoringTasks[infoHash];
+    if (restoring != null) return restoring;
     final session = _engine.getSession(infoHash);
     if (session != null) {
-      newController.add(_taskFromSession(session, _addedAt[infoHash] ?? DateTime.now()));
+      return _taskFromSession(session, _addedAt[infoHash] ?? DateTime.now());
     }
-    return newController.stream;
+    return null;
   }
 
   @override
