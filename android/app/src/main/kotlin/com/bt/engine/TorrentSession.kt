@@ -148,7 +148,7 @@ class TorrentSession(
             )
 
             val state = st.state()
-            _status.value = when {
+            val newStatus = when {
                 manualPaused -> Status.PAUSED
                 // 下载完成后统一视为完成（做种状态也归入完成，触发导出）
                 state == TorrentStatus.State.SEEDING ||
@@ -160,6 +160,23 @@ class TorrentSession(
                     state == TorrentStatus.State.DOWNLOADING_METADATA -> Status.DOWNLOADING
                 else -> Status.DOWNLOADING
             }
+            if (isStreaming) {
+                if (newStatus != _status.value) {
+                    Log.i(
+                        TAG,
+                        "流播状态变化: $infoHash ${_status.value} -> $newStatus, " +
+                            "state=$state, peers=${st.numPeers()}, seeds=${st.numSeeds()}, " +
+                            "进度=${(progress * 100).toInt()}%"
+                    )
+                }
+                if (state == TorrentStatus.State.UNKNOWN) {
+                    Log.e(
+                        TAG,
+                        "流播异常状态: $infoHash state=$state error=${st.errorCode().message}"
+                    )
+                }
+            }
+            _status.value = newStatus
         } catch (e: Exception) {
             Log.w(TAG, "刷新进度失败: $e")
         }

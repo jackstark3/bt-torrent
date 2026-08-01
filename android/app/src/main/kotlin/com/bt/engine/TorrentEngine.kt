@@ -16,9 +16,9 @@ import org.libtorrent4j.SessionManager
 import org.libtorrent4j.SessionParams
 import org.libtorrent4j.SettingsPack
 import org.libtorrent4j.TorrentHandle
-import org.libtorrent4j.TorrentInfo
 import org.libtorrent4j.swig.remove_flags_t
 import org.libtorrent4j.swig.settings_pack
+import org.libtorrent4j.swig.torrent_flags_t
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -177,17 +177,42 @@ class TorrentEngine private constructor(private val context: Context) {
             val manager = sessionManager
                 ?: throw Exception("session 未启动")
 
-            // 等待元数据（磁力链接从 DHT/peers 获取，最多 60 秒）
-            val metaBytes = manager.fetchMagnet(magnetUri, 60, File(savePath))
-                ?: throw Exception("获取种子元数据超时")
-            val ti = TorrentInfo.bdecode(metaBytes)
+            // 保存目录必须存在（libtorrent 依赖 save_path 目录）
+            val saveDir = File(savePath)
+            if (!saveDir.exists() && !saveDir.mkdirs()) {
+                throw Exception("无法创建保存目录: $savePath")
+            }
 
-            // 添加到会话
-            manager.download(ti, File(savePath))
+            // 一次性添加磁力（默认 auto-managed，元数据就绪后自动开始下载）。
+            // 不使用 fetchMagnet：它的临时 torrent 是异步移除的，紧接着再 download()
+            // 会命中"同 hash 已存在"分支，任务从未真正添加（在线播放 piece 永远不来）。
+            manager.download(magnetUri, saveDir, torrent_flags_t())
 
-            val hash = ti.infoHash()
-            val infoHash = hash.toString()
-            val handle = manager.find(hash)
+            val hashHex = extractInfoHash(magnetUri)
+                ?: throw Exception("无法解析磁力链接 info_hash")
+            val hash = Sha1Hash.parseHex(hashHex)
+
+            // 等待元数据就绪（磁力链接从 DHT/peers 获取，最多 60 秒）
+            val deadline = System.currentTimeMillis() + 60_000
+            var handle = manager.find(hash)
+            while (handle == null || !handle.isValid || handle.torrentFile() == null) {
+                if (System.currentTimeMillis() >= deadline) {
+                    // 超时：清理刚添加的 torrent，避免残留
+                    if (handle != null && handle.isValid) {
+                        try {
+                            manager.remove(handle)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "清理超时 torrent 失败: $e")
+                        }
+                    }
+                    throw Exception("获取种子元数据超时")
+                }
+                delay(500)
+                handle = manager.find(hash)
+            }
+
+            val ti = handle.torrentFile()
+            val infoHash = ti.infoHash().toString()
 
             val session = TorrentSession(
                 infoHash = infoHash,
@@ -207,6 +232,12 @@ class TorrentEngine private constructor(private val context: Context) {
             Log.e(TAG, "添加下载失败", e)
             Result.failure(e)
         }
+    }
+
+    /** 从磁力链接提取 info_hash（40 位十六进制，v1） */
+    private fun extractInfoHash(magnetUri: String): String? {
+        val m = Regex("xt=urn:btih:([A-Fa-f0-9]{40})").find(magnetUri)
+        return m?.groupValues?.get(1)?.lowercase()
     }
 
     /** 暂停下载 */

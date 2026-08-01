@@ -82,6 +82,8 @@ class PlaybackRepositoryImpl implements PlaybackRepository {
           DateTime.now().millisecondsSinceEpoch.toString();
       final savePath =
           '${tempRoot.path}${Platform.pathSeparator}$infoHash';
+      // 确保会话保存目录存在
+      await Directory(savePath).create(recursive: true);
 
       final result =
           await _engine.startDownload(magnetUri, savePath, isStreaming: true);
