@@ -6,6 +6,9 @@ abstract class DownloadRepository {
   /// 启动下载
   Future<Result<DownloadTask>> startDownload(String magnetUri, String savePath);
 
+  /// 采纳一个已存在的引擎会话为正式下载任务（在线播放转存用）
+  Future<Result<DownloadTask>> adoptSession(String infoHash);
+
   /// 暂停下载
   Future<Result<void>> pauseDownload(String infoHash);
 

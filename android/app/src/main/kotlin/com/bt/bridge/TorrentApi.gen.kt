@@ -186,6 +186,47 @@ data class TorrentFileData (
 
   override fun hashCode(): Int = toList().hashCode()
 }
+
+/**
+ * 种子元数据（在线播放需要 piece 长度/数量）
+ *
+ * Generated class from Pigeon that represents data sent in messages.
+ */
+data class TorrentMetaData (
+  val name: String,
+  val totalBytes: Long,
+  val pieceLength: Long,
+  val numPieces: Long
+)
+ {
+  companion object {
+    fun fromList(pigeonVar_list: List<Any?>): TorrentMetaData {
+      val name = pigeonVar_list[0] as String
+      val totalBytes = pigeonVar_list[1] as Long
+      val pieceLength = pigeonVar_list[2] as Long
+      val numPieces = pigeonVar_list[3] as Long
+      return TorrentMetaData(name, totalBytes, pieceLength, numPieces)
+    }
+  }
+  fun toList(): List<Any?> {
+    return listOf(
+      name,
+      totalBytes,
+      pieceLength,
+      numPieces,
+    )
+  }
+  override fun equals(other: Any?): Boolean {
+    if (other !is TorrentMetaData) {
+      return false
+    }
+    if (this === other) {
+      return true
+    }
+    return TorrentApiPigeonUtils.deepEquals(toList(), other.toList())  }
+
+  override fun hashCode(): Int = toList().hashCode()
+}
 private open class TorrentApiPigeonCodec : StandardMessageCodec() {
   override fun readValueOfType(type: Byte, buffer: ByteBuffer): Any? {
     return when (type) {
@@ -197,6 +238,11 @@ private open class TorrentApiPigeonCodec : StandardMessageCodec() {
       130.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
           TorrentFileData.fromList(it)
+        }
+      }
+      131.toByte() -> {
+        return (readValue(buffer) as? List<Any?>)?.let {
+          TorrentMetaData.fromList(it)
         }
       }
       else -> super.readValueOfType(type, buffer)
@@ -212,6 +258,10 @@ private open class TorrentApiPigeonCodec : StandardMessageCodec() {
         stream.write(130)
         writeValue(stream, value.toList())
       }
+      is TorrentMetaData -> {
+        stream.write(131)
+        writeValue(stream, value.toList())
+      }
       else -> super.writeValue(stream, value)
     }
   }
@@ -224,8 +274,8 @@ private open class TorrentApiPigeonCodec : StandardMessageCodec() {
  * Generated interface from Pigeon that represents a handler of messages from Flutter.
  */
 interface TorrentHostApi {
-  /** 启动下载 */
-  fun startDownload(magnetUri: String, savePath: String, callback: (Result<String>) -> Unit)
+  /** 启动下载（isStreaming = 在线播放临时会话，不进下载管理、完成不导出） */
+  fun startDownload(magnetUri: String, savePath: String, isStreaming: Boolean, callback: (Result<String>) -> Unit)
   /** 暂停下载 */
   fun pauseDownload(infoHash: String, callback: (Result<Unit>) -> Unit)
   /** 恢复下载 */
@@ -236,6 +286,10 @@ interface TorrentHostApi {
   fun getProgress(infoHash: String, callback: (Result<DownloadProgressData>) -> Unit)
   /** 获取文件列表 */
   fun getFiles(infoHash: String, callback: (Result<List<TorrentFileData>>) -> Unit)
+  /** 获取种子元数据（piece 长度、数量等） */
+  fun getTorrentMeta(infoHash: String, callback: (Result<TorrentMetaData>) -> Unit)
+  /** 将在线播放会话转存为正式下载任务 */
+  fun convertToDownload(infoHash: String, callback: (Result<Unit>) -> Unit)
   /** 设置 piece 优先级 */
   fun setPiecePriority(infoHash: String, pieceIndex: Long, priority: Long, callback: (Result<Unit>) -> Unit)
   /** 设置 piece deadline */
@@ -259,7 +313,8 @@ interface TorrentHostApi {
             val args = message as List<Any?>
             val magnetUriArg = args[0] as String
             val savePathArg = args[1] as String
-            api.startDownload(magnetUriArg, savePathArg) { result: Result<String> ->
+            val isStreamingArg = args[2] as Boolean
+            api.startDownload(magnetUriArg, savePathArg, isStreamingArg) { result: Result<String> ->
               val error = result.exceptionOrNull()
               if (error != null) {
                 reply.reply(TorrentApiPigeonUtils.wrapError(error))
@@ -364,6 +419,45 @@ interface TorrentHostApi {
               } else {
                 val data = result.getOrNull()
                 reply.reply(TorrentApiPigeonUtils.wrapResult(data))
+              }
+            }
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.bt_torrent.TorrentHostApi.getTorrentMeta$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val infoHashArg = args[0] as String
+            api.getTorrentMeta(infoHashArg) { result: Result<TorrentMetaData> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(TorrentApiPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(TorrentApiPigeonUtils.wrapResult(data))
+              }
+            }
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.bt_torrent.TorrentHostApi.convertToDownload$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val infoHashArg = args[0] as String
+            api.convertToDownload(infoHashArg) { result: Result<Unit> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(TorrentApiPigeonUtils.wrapError(error))
+              } else {
+                reply.reply(TorrentApiPigeonUtils.wrapResult(null))
               }
             }
           }

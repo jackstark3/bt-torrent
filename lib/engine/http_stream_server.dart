@@ -1,13 +1,38 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
+
 import 'package:bt_torrent/core/utils/logger.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as io;
 import 'package:shelf_router/shelf_router.dart';
 
+/// 流媒体数据源接口（按字节区间提供数据）
+abstract class StreamDataSource {
+  /// 文件总长度（字节）
+  Future<int> get length;
+
+  /// 读取 [start, end]（含端点）区间的数据
+  Future<Uint8List> readRange(int start, int end);
+
+  /// MIME 类型
+  String get contentType;
+}
+
+/// piece 在超时时间内未就绪
+class PieceNotReadyException implements Exception {
+  final int pieceIndex;
+  final Duration timeout;
+
+  PieceNotReadyException(this.pieceIndex, this.timeout);
+
+  @override
+  String toString() => 'piece $pieceIndex 在 $timeout 内未就绪';
+}
+
 /// 本地 HTTP 流媒体服务器
-/// 将已下载的 BT piece 通过 HTTP Range 请求提供给视频播放器
+/// 将在线播放会话的 piece 数据通过 HTTP Range 请求提供给视频播放器
 class HttpStreamServer {
   final AppLogger _logger = AppLogger('HttpStreamServer');
 
@@ -15,8 +40,8 @@ class HttpStreamServer {
   int _port = 0;
   bool _isRunning = false;
 
-  // 文件映射: {infoHash}_{fileIndex} -> File
-  final Map<String, File> _fileMap = {};
+  // 数据源映射: {infoHash}_{fileIndex} -> StreamDataSource
+  final Map<String, StreamDataSource> _sources = {};
 
   /// 服务器端口
   int get port => _port;
@@ -24,24 +49,25 @@ class HttpStreamServer {
   /// 是否运行中
   bool get isRunning => _isRunning;
 
+  /// 当前注册的数据源数量
+  int get activeSourceCount => _sources.length;
+
   /// 启动服务器
   Future<int> start() async {
     if (_isRunning) return _port;
 
     final app = Router();
 
-    // HEAD 请求 — 返回文件信息
-    app.get('/stream/<infoHash>/<fileIndex>', (Request request, String infoHash, String fileIndex) async {
-      return await _handleStreamRequest(request, infoHash, fileIndex);
+    app.get(
+        '/stream/<infoHash>/<fileIndex>',
+        (Request request, String infoHash, String fileIndex) async {
+      return _handleRequest(request, infoHash, fileIndex, isHead: false);
     });
 
-    // 将所有请求转为 GET（shelf_router 默认行为）
-    app.head('/stream/<infoHash>/<fileIndex>', (Request request, String infoHash, String fileIndex) async {
-      return await _handleStreamRequest(
-        Request('GET', request.url, body: '', headers: request.headers),
-        infoHash,
-        fileIndex,
-      );
+    app.head(
+        '/stream/<infoHash>/<fileIndex>',
+        (Request request, String infoHash, String fileIndex) async {
+      return _handleRequest(request, infoHash, fileIndex, isHead: true);
     });
 
     // 健康检查
@@ -55,7 +81,7 @@ class HttpStreamServer {
       try {
         _port = 18000 + random.nextInt(10000);
         _server = await io.serve(
-          app,
+          app.call,
           InternetAddress.loopbackIPv4,
           _port,
         );
@@ -70,109 +96,157 @@ class HttpStreamServer {
     throw Exception('无法启动 HTTP 流媒体服务器：所有端口都被占用');
   }
 
-  /// 注册文件
-  void registerFile(String infoHash, int fileIndex, File file) {
-    final key = '${infoHash}_$fileIndex';
-    _fileMap[key] = file;
-    _logger.info('注册文件: $key -> ${file.path}');
+  /// 注册数据源
+  void registerSource(
+    String infoHash,
+    int fileIndex,
+    StreamDataSource source,
+  ) {
+    final key = _key(infoHash, fileIndex);
+    _sources[key] = source;
+    _logger.info('注册数据源: $key');
   }
 
+  /// 注销数据源
+  void unregisterSource(String infoHash, int fileIndex) {
+    _sources.remove(_key(infoHash, fileIndex));
+  }
+
+  /// 是否已有数据源
+  bool hasSource(String infoHash, int fileIndex) {
+    return _sources.containsKey(_key(infoHash, fileIndex));
+  }
+
+  String _key(String infoHash, int fileIndex) =>
+      '${infoHash}_$fileIndex';
+
   /// 处理流媒体请求
-  Future<Response> _handleStreamRequest(
+  Future<Response> _handleRequest(
     Request request,
     String infoHash,
     String fileIndex,
+    {required bool isHead}
   ) async {
-    final key = '${infoHash}_$fileIndex';
-    final file = _fileMap[key];
-
-    if (file == null || !await file.exists()) {
-      return Response.notFound('文件不存在');
+    final source = _sources[_key(infoHash, int.tryParse(fileIndex) ?? -1)];
+    if (source == null) {
+      return Response.notFound('数据源不存在');
     }
 
     try {
-      final fileSize = await file.length();
-      final rangeHeader = request.headers['Range'] ?? request.headers['range'];
+      final fileSize = await source.length;
+      final baseHeaders = <String, String>{
+        'Content-Type': source.contentType,
+        'Content-Length': '$fileSize',
+        'Accept-Ranges': 'bytes',
+        'Access-Control-Allow-Origin': '*',
+      };
 
-      if (rangeHeader != null) {
-        return _handleRangeRequest(file, fileSize, rangeHeader);
+      // HEAD 请求：只返回头信息，不带 body
+      if (isHead) {
+        return Response(200, body: '', headers: baseHeaders);
       }
 
-      // 无 Range 头 — 返回整个文件
+      final rangeHeader = _rangeHeader(request.headers);
+      if (rangeHeader != null) {
+        return _handleRangeRequest(source, fileSize, rangeHeader);
+      }
+
+      // 无 Range 头 — 分块返回整个文件
       return Response.ok(
-        file.openRead(),
-        headers: {
-          'Content-Type': _getMimeType(file.path),
-          'Content-Length': '$fileSize',
-          'Accept-Ranges': 'bytes',
-          'Access-Control-Allow-Origin': '*',
-        },
+        _readAll(source, fileSize),
+        headers: baseHeaders,
       );
+    } on PieceNotReadyException catch (e) {
+      _logger.warning('piece 未就绪: $e');
+      return Response(503, body: '数据未就绪，请稍后重试');
     } catch (e) {
       _logger.error('流媒体服务错误', e);
       return Response.internalServerError(body: '流媒体服务错误');
     }
   }
 
+  String? _rangeHeader(Map<String, String> headers) {
+    for (final entry in headers.entries) {
+      if (entry.key.toLowerCase() == 'range') return entry.value;
+    }
+    return null;
+  }
+
   /// 处理 HTTP Range 请求
-  Response _handleRangeRequest(File file, int fileSize, String rangeHeader) {
+  Future<Response> _handleRangeRequest(
+    StreamDataSource source,
+    int fileSize,
+    String rangeHeader,
+  ) async {
     try {
-      final match = RegExp(r'bytes=(\d+)-(\d*)').firstMatch(rangeHeader);
+      final match = RegExp(r'bytes=(\d*)-(\d*)').firstMatch(rangeHeader);
       if (match == null) {
-        return Response(416, body: 'Range Not Satisfiable');
+        return _rangeNotSatisfiable(fileSize);
       }
 
-      final start = int.parse(match.group(1)!);
+      final startStr = match.group(1);
       final endStr = match.group(2);
-      int end = endStr != null && endStr.isNotEmpty
-          ? int.parse(endStr)
-          : fileSize - 1;
+      int start;
+      int end;
 
-      end = min(end, fileSize - 1);
+      if (startStr == null || startStr.isEmpty) {
+        // 后缀范围: bytes=-N → 最后 N 字节
+        final suffix = int.parse(endStr ?? '');
+        if (suffix <= 0) return _rangeNotSatisfiable(fileSize);
+        start = max(0, fileSize - suffix);
+        end = fileSize - 1;
+      } else {
+        start = int.parse(startStr);
+        end = (endStr != null && endStr.isNotEmpty)
+            ? int.parse(endStr)
+            : fileSize - 1;
+        end = min(end, fileSize - 1);
+      }
 
-      if (start >= fileSize) {
-        return Response(416, body: 'Range Not Satisfiable');
+      if (start >= fileSize || start > end) {
+        return _rangeNotSatisfiable(fileSize);
       }
 
       final length = end - start + 1;
-
       _logger.debug('Range: bytes $start-$end/$fileSize');
 
-      final stream = file.openRead(start, end + 1);
+      final data = await source.readRange(start, end);
 
       return Response(
         206, // Partial Content
-        body: stream,
+        body: data,
         headers: {
-          'Content-Type': _getMimeType(file.path),
+          'Content-Type': source.contentType,
           'Content-Length': '$length',
           'Content-Range': 'bytes $start-$end/$fileSize',
           'Accept-Ranges': 'bytes',
           'Access-Control-Allow-Origin': '*',
         },
       );
+    } on PieceNotReadyException catch (e) {
+      _logger.warning('piece 未就绪: $e');
+      return Response(503, body: '数据未就绪，请稍后重试');
     } catch (e) {
       _logger.error('Range 处理错误', e);
       return Response.internalServerError(body: 'Range 处理错误');
     }
   }
 
-  /// 获取 MIME 类型
-  String _getMimeType(String path) {
-    final ext = path.split('.').last.toLowerCase();
-    return switch (ext) {
-      'mp4' => 'video/mp4',
-      'mkv' => 'video/x-matroska',
-      'webm' => 'video/webm',
-      'avi' => 'video/x-msvideo',
-      'mov' => 'video/quicktime',
-      'flv' => 'video/x-flv',
-      'm4v' => 'video/mp4',
-      'mp3' => 'audio/mpeg',
-      'aac' => 'audio/aac',
-      'ogg' => 'audio/ogg',
-      _ => 'application/octet-stream',
-    };
+  Response _rangeNotSatisfiable(int fileSize) {
+    return Response(416,
+        body: 'Range Not Satisfiable',
+        headers: {'Content-Range': 'bytes */$fileSize'});
+  }
+
+  /// 分块读取整个文件（无 Range 请求时）
+  Stream<Uint8List> _readAll(StreamDataSource source, int fileSize) async* {
+    const chunk = 1 << 20; // 1MB
+    var pos = 0;
+    while (pos < fileSize) {
+      final end = min(pos + chunk - 1, fileSize - 1);
+      yield await source.readRange(pos, end);
+      pos = end + 1;
+    }
   }
 
   /// 停止服务器
@@ -182,6 +256,6 @@ class HttpStreamServer {
     await _server?.close(force: true);
     _server = null;
     _isRunning = false;
-    _fileMap.clear();
+    _sources.clear();
   }
 }

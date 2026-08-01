@@ -5,7 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:bt_torrent/core/models/download_task.dart';
+import 'package:bt_torrent/core/models/playback_session.dart';
 import 'package:bt_torrent/providers/download_providers.dart';
+import 'package:bt_torrent/providers/playback_providers.dart';
 
 class DownloadListScreen extends ConsumerWidget {
   const DownloadListScreen({super.key});
@@ -13,13 +15,15 @@ class DownloadListScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tasksAsync = ref.watch(downloadTasksProvider);
+    final playbacks =
+        ref.watch(playbackSessionsProvider).valueOrNull ?? const <PlaybackSession>[];
     final theme = Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(title: const Text('下载管理')),
       body: tasksAsync.when(
         data: (tasks) {
-          if (tasks.isEmpty) {
+          if (tasks.isEmpty && playbacks.isEmpty) {
             return Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -39,12 +43,33 @@ class DownloadListScreen extends ConsumerWidget {
             );
           }
 
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: tasks.length,
-            itemBuilder: (context, index) {
-              final task = tasks[index];
-              return _DownloadItem(
+          final children = <Widget>[];
+
+          // 最近播放（在线播放会话，保留最近 1-2 个）
+          if (playbacks.isNotEmpty) {
+            children.add(Row(
+              children: [
+                Text('最近播放',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w600)),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: () => _clearPlaybacks(context, ref),
+                  icon: const Icon(Icons.delete_sweep, size: 18),
+                  label: const Text('一键清理'),
+                ),
+              ],
+            ));
+            children.addAll(playbacks.map((session) => _PlaybackSessionCard(
+                  session: session,
+                  onPlay: () => _playSession(context, ref, session),
+                  onRemove: () =>
+                      _removePlayback(context, ref, session.infoHash),
+                )));
+            children.add(const SizedBox(height: 8));
+          }
+
+          children.addAll(tasks.map((task) => _DownloadItem(
                 task: task,
                 onTap: () => context.pushNamed(
                   'downloadDetail',
@@ -73,8 +98,11 @@ class DownloadListScreen extends ConsumerWidget {
                       .read(removeDownloadAction)
                       .execute(task.infoHash, deleteFiles: true);
                 },
-              );
-            },
+              )));
+
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: children,
           );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -96,6 +124,118 @@ class DownloadListScreen extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  /// 继续播放在线播放会话
+  Future<void> _playSession(
+    BuildContext context,
+    WidgetRef ref,
+    PlaybackSession session,
+  ) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Dialog(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(width: 16),
+              Flexible(child: Text('恢复播放会话...')),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final result =
+        await ref.read(ensurePlaybackSessionAction).execute(session);
+    if (context.mounted) {
+      try {
+        Navigator.of(context).pop();
+      } catch (_) {}
+    }
+    if (!context.mounted) return;
+
+    if (result.isError) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('恢复会话失败：${result.error}')),
+      );
+      return;
+    }
+
+    final videos = result.value!.videoFiles;
+    if (videos.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('该种子中没有可播放的视频')),
+      );
+      return;
+    }
+    final lastFileIndex = result.value!.lastFileIndex;
+    final fileIndex = videos.any((f) => f.index == lastFileIndex)
+        ? lastFileIndex
+        : videos.first.index;
+
+    context.pushNamed(
+      'player',
+      pathParameters: {
+        'infoHash': session.infoHash,
+        'fileIndex': '$fileIndex',
+      },
+      queryParameters: {'stream': '1'},
+    );
+  }
+
+  Future<void> _removePlayback(
+    BuildContext context,
+    WidgetRef ref,
+    String infoHash,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除播放记录？'),
+        content: const Text('将同时删除该会话的临时缓存文件。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await ref.read(removePlaybackSessionAction).execute(infoHash);
+    }
+  }
+
+  Future<void> _clearPlaybacks(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('一键清理播放记录？'),
+        content: const Text('将删除所有在线播放会话及其临时缓存文件。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('清理'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await ref.read(clearPlaybackSessionsAction).execute();
+    }
   }
 
   /// 分享已完成任务的文件（优先公共下载目录，回退私有目录）
@@ -127,6 +267,89 @@ class DownloadListScreen extends ConsumerWidget {
         );
       }
     }
+  }
+}
+
+/// 在线播放会话卡片
+class _PlaybackSessionCard extends StatelessWidget {
+  final PlaybackSession session;
+  final VoidCallback onPlay;
+  final VoidCallback onRemove;
+
+  const _PlaybackSessionCard({
+    required this.session,
+    required this.onPlay,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final hasVideo = session.videoFiles.isNotEmpty;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(session.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w600)),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: const Text(
+                          '在线播放',
+                          style: TextStyle(
+                              color: Colors.green, fontSize: 11),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  LinearProgressIndicator(value: session.progress),
+                  const SizedBox(height: 6),
+                  Text(
+                    session.progressFormatted,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+            if (hasVideo)
+              IconButton(
+                icon: const Icon(Icons.play_circle_fill,
+                    color: Colors.green, size: 28),
+                tooltip: '继续播放',
+                onPressed: onPlay,
+                visualDensity: VisualDensity.compact,
+              ),
+            IconButton(
+              icon: const Icon(Icons.close, size: 20),
+              tooltip: '删除记录',
+              onPressed: onRemove,
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -6,17 +7,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 
 import 'package:bt_torrent/core/models/download_task.dart';
+import 'package:bt_torrent/providers/core_providers.dart';
 import 'package:bt_torrent/providers/download_providers.dart';
+import 'package:bt_torrent/providers/playback_providers.dart';
 import 'package:bt_torrent/providers/player_providers.dart';
 
 class PlayerScreen extends ConsumerStatefulWidget {
   final String infoHash;
   final int fileIndex;
+  final bool streaming;
 
   const PlayerScreen({
     super.key,
     required this.infoHash,
     required this.fileIndex,
+    this.streaming = false,
   });
 
   @override
@@ -29,29 +34,51 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   bool _isLandscape = false;
   String? _error;
   String _fileName = '';
+  bool _usingLocalFile = false;
+  bool _converted = false;
+  bool _switchingToLocal = false;
+
+  int? _lastPositionMs;
+  int _trackedPiece = -1;
+  int _pieceLength = 0;
+  StreamSubscription<dynamic>? _progressSub;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _initPlayer());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.streaming) {
+        _initStreamingPlayer();
+      } else {
+        _initLocalPlayer();
+      }
+    });
   }
 
   @override
   void dispose() {
-    // 退出播放器时恢复默认屏幕方向
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
+    _progressSub?.cancel();
+    if (widget.streaming) {
+      final service = ref.read(streamingServiceProvider);
+      unawaited(service.stopStreaming(
+        widget.infoHash,
+        fileIndex: widget.fileIndex,
+      ));
+    }
     _controller?.dispose();
     super.dispose();
   }
 
-  Future<void> _initPlayer() async {
+  // ===== 本地文件播放（下载完成） =====
+
+  Future<void> _initLocalPlayer() async {
     final task =
         ref.read(downloadProgressProvider(widget.infoHash)).valueOrNull;
-    // 优先任务自带文件列表（本地清单），原生引擎拉取仅作补充
     final taskFiles = task?.files ?? const <TorrentFileInfo>[];
     final engineFiles =
         ref.read(downloadFilesProvider(widget.infoHash)).valueOrNull ?? [];
@@ -95,23 +122,200 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
     try {
       final controller = VideoPlayerController.file(File(path));
-      await controller.initialize();
-      await controller.setLooping(false);
-      if (!mounted) {
-        controller.dispose();
-        return;
-      }
-      setState(() => _controller = controller);
-      ref.read(playerStateProvider.notifier).ready();
-      controller.play();
-      controller.addListener(() {
-        if (mounted) setState(() {});
-      });
+      await _prepareController(controller);
     } catch (e) {
       setState(() => _error = '无法播放视频：$e');
       ref.read(playerStateProvider.notifier).error('无法播放: $e');
     }
   }
+
+  // ===== 在线播放（磁力直连流播） =====
+
+  Future<void> _initStreamingPlayer() async {
+    try {
+      final repo = ref.read(playbackRepositoryProvider);
+      var session = repo.getSession(widget.infoHash);
+      if (session == null) {
+        setState(() => _error = '播放会话不存在，请重新在线播放');
+        return;
+      }
+
+      // 引擎会话可能已被清理（重启后），先重新挂载（阻塞等待元数据）
+      final ensured =
+          await ref.read(ensurePlaybackSessionAction).execute(session);
+      if (ensured.isError) {
+        setState(() => _error = '会话恢复失败：${ensured.error}');
+        return;
+      }
+      session = ensured.value!;
+
+      if (session.files.isEmpty || widget.fileIndex >= session.files.length) {
+        setState(() => _error = '未找到视频文件信息');
+        return;
+      }
+      final file = session.files[widget.fileIndex];
+      if (!file.isVideo) {
+        setState(() => _error = '所选文件不是视频');
+        return;
+      }
+      _fileName = file.name;
+
+      final engine = ref.read(torrentEngineProvider);
+      final metaResult = await engine.getTorrentMeta(widget.infoHash);
+      if (metaResult.isError ||
+          metaResult.value == null ||
+          metaResult.value!.pieceLength <= 0) {
+        setState(() => _error =
+            '获取种子元数据失败：${metaResult.error ?? 'piece 信息为空'}');
+        return;
+      }
+      final meta = metaResult.value!;
+      _pieceLength = meta.pieceLength;
+
+      final service = ref.read(streamingServiceProvider);
+      final url = await service.startStreaming(
+        infoHash: widget.infoHash,
+        fileIndex: widget.fileIndex,
+        files: session.files,
+        pieceLength: meta.pieceLength,
+        numPieces: meta.numPieces,
+      );
+      if (!mounted) return;
+
+      final controller =
+          VideoPlayerController.networkUrl(Uri.parse(url));
+      await _prepareController(controller);
+
+      // 下载完成后无缝切换本地文件（避免导出后流中断）
+      final engineSession = engine.getSession(widget.infoHash);
+      _progressSub = engineSession?.progressStream.listen((p) {
+        if (p.progressPercent >= 1.0) {
+          unawaited(_trySwitchToLocal());
+        }
+      });
+
+      ref.read(markPlayedAction)
+          .execute(widget.infoHash, fileIndex: widget.fileIndex);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = '在线播放失败：$e');
+        ref.read(playerStateProvider.notifier).error('在线播放失败: $e');
+      }
+    }
+  }
+
+  /// 准备播放控制器（初始化 + 播放 + 进度联动）
+  Future<void> _prepareController(VideoPlayerController controller) async {
+    await controller.initialize();
+    await controller.setLooping(false);
+    if (!mounted) {
+      controller.dispose();
+      return;
+    }
+    setState(() => _controller = controller);
+    ref.read(playerStateProvider.notifier).ready();
+    controller.play();
+    _lastPositionMs = null;
+    _trackedPiece = -1;
+    controller.addListener(_onControllerTick);
+  }
+
+  /// 播放进度 → piece 优先级窗口联动
+  void _onControllerTick() {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    if (mounted) setState(() {});
+    if (!widget.streaming || _usingLocalFile) return;
+
+    final pos = controller.value.position;
+    final dur = controller.value.duration;
+    if (dur.inMilliseconds <= 0) return;
+
+    final repo = ref.read(playbackRepositoryProvider);
+    final session = repo.getSession(widget.infoHash);
+    final meta = session?.files;
+    if (meta == null ||
+        meta.isEmpty ||
+        widget.fileIndex >= meta.length) {
+      return;
+    }
+    final fileLength = meta[widget.fileIndex].sizeBytes;
+    if (fileLength <= 0) return;
+
+    final fileOffset = meta
+        .take(widget.fileIndex)
+        .fold<int>(0, (sum, f) => sum + f.sizeBytes);
+    final byte =
+        (pos.inMilliseconds / dur.inMilliseconds * fileLength).round();
+    final globalByte = fileOffset + byte;
+
+    final pieceLength = _pieceLength;
+    if (pieceLength <= 0) return;
+    final piece = globalByte ~/ pieceLength;
+    if (piece == _trackedPiece) return;
+    _trackedPiece = piece;
+
+    final service = ref.read(streamingServiceProvider);
+    if (_lastPositionMs != null) {
+      final delta = pos.inMilliseconds - _lastPositionMs!;
+      if (delta > 2000 || delta < -1500) {
+        unawaited(service.onSeek(widget.infoHash, piece));
+      } else {
+        unawaited(service.onPositionChanged(widget.infoHash, piece));
+      }
+    } else {
+      unawaited(service.onPositionChanged(widget.infoHash, piece));
+    }
+    _lastPositionMs = pos.inMilliseconds;
+  }
+
+  /// 下载完成后切换到本地文件继续播放
+  Future<void> _trySwitchToLocal() async {
+    if (_switchingToLocal || _usingLocalFile) return;
+    final repo = ref.read(playbackRepositoryProvider);
+    final session = repo.getSession(widget.infoHash);
+    if (session == null ||
+        session.files.isEmpty ||
+        widget.fileIndex >= session.files.length) {
+      return;
+    }
+    final file = session.files[widget.fileIndex];
+    final publicPath = '/storage/emulated/0/Download/${file.name}';
+    final privatePath = '${session.savePath}/${file.path}';
+    String? path;
+    if (File(publicPath).existsSync()) {
+      path = publicPath;
+    } else if (File(privatePath).existsSync()) {
+      path = privatePath;
+    }
+    if (path == null) return;
+
+    _switchingToLocal = true;
+    try {
+      final old = _controller;
+      if (old == null) return;
+      final position = old.value.position;
+      final wasPlaying = old.value.isPlaying;
+      final local = VideoPlayerController.file(File(path));
+      await local.initialize();
+      await local.seekTo(position);
+      if (wasPlaying) await local.play();
+      if (!mounted) {
+        local.dispose();
+        return;
+      }
+      setState(() {
+        _controller = local;
+        _usingLocalFile = true;
+        old.dispose();
+      });
+      local.addListener(_onControllerTick);
+    } catch (e) {
+      _switchingToLocal = false;
+    }
+  }
+
+  // ===== 操作 =====
 
   void _togglePlay() {
     final controller = _controller;
@@ -137,6 +341,24 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       SystemChrome.setPreferredOrientations([
         DeviceOrientation.portraitUp,
       ]);
+    }
+  }
+
+  /// 转存为下载任务
+  Future<void> _convertToDownload() async {
+    final result = await ref
+        .read(convertPlaybackToDownloadAction)
+        .execute(widget.infoHash);
+    if (!mounted) return;
+    if (result.isSuccess) {
+      setState(() => _converted = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已转存为下载任务，可在"下载"页面查看')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('转存失败：${result.error}')),
+      );
     }
   }
 
@@ -220,6 +442,30 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                               ),
                             ),
                           ),
+                          // 在线播放标识
+                          if (widget.streaming && !_usingLocalFile)
+                            Container(
+                              margin: const EdgeInsets.only(right: 8),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: Colors.green.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Text(
+                                '在线播放',
+                                style: TextStyle(
+                                    color: Colors.greenAccent, fontSize: 11),
+                              ),
+                            ),
+                          // 转存为下载任务
+                          if (widget.streaming && !_converted)
+                            IconButton(
+                              icon: const Icon(Icons.save_alt,
+                                  color: Colors.white),
+                              tooltip: '转存为下载任务',
+                              onPressed: _convertToDownload,
+                            ),
                           // 横竖屏切换
                           IconButton(
                             icon: Icon(

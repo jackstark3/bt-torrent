@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:bt_torrent/core/utils/logger.dart';
 import 'package:bt_torrent/engine/torrent_engine.dart';
 
@@ -13,7 +15,8 @@ class PiecePriority {
 }
 
 /// 流媒体 piece 管理器
-/// 实现滑动窗口优先级算法，确保播放位置周围的 piece 优先下载
+/// 滑动窗口优先级算法：播放位置周围优先下载，
+/// 同时始终优先文件尾部（MP4 moov / MKV cues 等元数据）。
 class StreamManager {
   final TorrentEngine _engine;
   final AppLogger _logger = AppLogger('StreamManager');
@@ -27,10 +30,14 @@ class StreamManager {
   /// 每个 piece 的大小 (bytes)
   int _pieceSize = 0;
 
+  /// 已设置过优先级的 piece（退出时恢复默认）
+  final Set<int> _changed = {};
+
   /// 滑动窗口配置
   static const int _windowSize = 80; // 预取窗口
   static const int _criticalWindow = 3; // 紧急窗口
   static const int _highPriorityWindow = 8; // 高优先级窗口
+  static const int _tailPieces = 10; // 尾部元数据 piece 数
 
   StreamManager(this._engine);
 
@@ -47,6 +54,7 @@ class StreamManager {
 
     _logger.info('初始化流媒体: $totalPieces pieces, ${pieceSize}bytes/piece');
     await _updatePriorities(infoHash);
+    await _prioritizeTail(infoHash);
   }
 
   /// 当播放位置前进时调用
@@ -60,22 +68,46 @@ class StreamManager {
   Future<void> onSeek(String infoHash, int targetPiece) async {
     _logger.info('拖拽到 piece $targetPiece');
     _currentPiece = targetPiece;
-
-    // 清除所有 deadline
-    // await _engine.clearPieceDeadlines(infoHash);
-
     await _updatePriorities(infoHash);
+  }
+
+  /// 恢复默认优先级（播放结束后调用，让后台顺序下载继续）
+  Future<void> restoreDefaults(String infoHash) async {
+    for (final i in _changed) {
+      await _engine.setPiecePriority(infoHash, i, PiecePriority.normal);
+    }
+    _changed.clear();
   }
 
   /// 更新滑动窗口内的 piece 优先级
   Future<void> _updatePriorities(String infoHash) async {
-    for (int i = 0; i < _totalPieces; i++) {
-      final distance = i - _currentPiece;
-      final priority = _calculatePriority(distance);
-
+    final first = max(0, _currentPiece - 2);
+    final last = min(_totalPieces - 1, _currentPiece + _windowSize);
+    for (int i = first; i <= last; i++) {
+      final priority = _calculatePriority(i - _currentPiece);
       if (priority > 0) {
-        await _engine.setPiecePriority(infoHash, i, priority);
+        await _setPriority(infoHash, i, priority);
       }
+    }
+  }
+
+  /// 始终优先尾部元数据 piece（moov/cues 常在文件末尾）
+  Future<void> _prioritizeTail(String infoHash) async {
+    for (int i = max(0, _totalPieces - _tailPieces); i < _totalPieces; i++) {
+      await _setPriority(infoHash, i, PiecePriority.maximum);
+    }
+  }
+
+  Future<void> _setPriority(
+    String infoHash,
+    int pieceIndex,
+    int priority,
+  ) async {
+    if (pieceIndex < 0 || pieceIndex >= _totalPieces) return;
+    final result =
+        await _engine.setPiecePriority(infoHash, pieceIndex, priority);
+    if (result.isSuccess) {
+      _changed.add(pieceIndex);
     }
   }
 
@@ -84,7 +116,7 @@ class StreamManager {
     if (distanceFromCurrent < 0) {
       // 已过去的 piece，仅保留短距离的
       if (distanceFromCurrent >= -2) return PiecePriority.normal;
-      return PiecePriority.ignore;
+      return 0; // 不设置（保持默认）
     }
 
     if (distanceFromCurrent < _criticalWindow) {
@@ -103,7 +135,7 @@ class StreamManager {
       return PiecePriority.normal; // 1 - 普通预取
     }
 
-    return PiecePriority.ignore; // 0 - 太远，暂不下载
+    return 0; // 太远，不设置（保持默认顺序）
   }
 
   /// 检查是否有足够的缓冲开始播放

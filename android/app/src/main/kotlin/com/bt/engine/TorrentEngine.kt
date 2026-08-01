@@ -115,7 +115,10 @@ class TorrentEngine private constructor(private val context: Context) {
                     if (session.status.value == TorrentSession.Status.COMPLETED &&
                         prev != TorrentSession.Status.COMPLETED
                     ) {
-                        exportFilesToPublic(session)
+                        // 在线播放会话只做临时缓存，不导出到公共目录
+                        if (!session.isStreaming) {
+                            exportFilesToPublic(session)
+                        }
                         _engineEvents.emit(EngineEvent.TorrentFinished(session.infoHash))
                     }
                 }
@@ -145,8 +148,12 @@ class TorrentEngine private constructor(private val context: Context) {
         sessionManager?.uploadRateLimit(bytesPerSec)
     }
 
-    /** 添加下载任务 */
-    suspend fun addTorrent(magnetUri: String, savePath: String): Result<TorrentSession> {
+    /** 添加下载任务（isStreaming = 在线播放临时会话） */
+    suspend fun addTorrent(
+        magnetUri: String,
+        savePath: String,
+        isStreaming: Boolean = false,
+    ): Result<TorrentSession> {
         if (!isInitialized) {
             val initResult = initialize()
             if (initResult.isFailure) {
@@ -191,6 +198,7 @@ class TorrentEngine private constructor(private val context: Context) {
             if (handle != null) {
                 session.attachHandle(handle)
             }
+            session.isStreaming = isStreaming
             sessions[infoHash] = session
 
             _engineEvents.emit(EngineEvent.TorrentAdded(infoHash))
@@ -244,8 +252,18 @@ class TorrentEngine private constructor(private val context: Context) {
     /** 获取下载任务 */
     fun getSession(infoHash: String): TorrentSession? = sessions[infoHash]
 
-    /** 获取所有下载任务 */
-    fun getAllSessions(): List<TorrentSession> = sessions.values.toList()
+    /** 获取所有正式下载任务（在线播放会话不出现在下载管理中） */
+    fun getAllSessions(): List<TorrentSession> =
+        sessions.values.filter { !it.isStreaming }
+
+    /** 将在线播放会话转存为正式下载任务 */
+    fun convertToDownload(infoHash: String): Result<Unit> {
+        val session = sessions[infoHash] ?: return Result.failure(Exception("任务不存在"))
+        session.isStreaming = false
+        Log.i(TAG, "会话已转存为正式下载: $infoHash")
+        _engineEvents.tryEmit(EngineEvent.TorrentAdded(infoHash))
+        return Result.success(Unit)
+    }
 
     /** 下载完成后将文件导出到公共下载目录（文件管理器可见） */
     private fun exportFilesToPublic(session: TorrentSession) {

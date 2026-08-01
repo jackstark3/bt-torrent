@@ -193,6 +193,63 @@ class TorrentFileData {
 ;
 }
 
+/// 种子元数据（在线播放需要 piece 长度/数量）
+class TorrentMetaData {
+  TorrentMetaData({
+    required this.name,
+    required this.totalBytes,
+    required this.pieceLength,
+    required this.numPieces,
+  });
+
+  String name;
+
+  int totalBytes;
+
+  int pieceLength;
+
+  int numPieces;
+
+  List<Object?> _toList() {
+    return <Object?>[
+      name,
+      totalBytes,
+      pieceLength,
+      numPieces,
+    ];
+  }
+
+  Object encode() {
+    return _toList();  }
+
+  static TorrentMetaData decode(Object result) {
+    result as List<Object?>;
+    return TorrentMetaData(
+      name: result[0]! as String,
+      totalBytes: result[1]! as int,
+      pieceLength: result[2]! as int,
+      numPieces: result[3]! as int,
+    );
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  bool operator ==(Object other) {
+    if (other is! TorrentMetaData || other.runtimeType != runtimeType) {
+      return false;
+    }
+    if (identical(this, other)) {
+      return true;
+    }
+    return _deepEquals(encode(), other.encode());
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  int get hashCode => Object.hashAll(_toList())
+;
+}
+
 
 class _PigeonCodec extends StandardMessageCodec {
   const _PigeonCodec();
@@ -207,6 +264,9 @@ class _PigeonCodec extends StandardMessageCodec {
     }    else if (value is TorrentFileData) {
       buffer.putUint8(130);
       writeValue(buffer, value.encode());
+    }    else if (value is TorrentMetaData) {
+      buffer.putUint8(131);
+      writeValue(buffer, value.encode());
     } else {
       super.writeValue(buffer, value);
     }
@@ -219,6 +279,8 @@ class _PigeonCodec extends StandardMessageCodec {
         return DownloadProgressData.decode(readValue(buffer)!);
       case 130: 
         return TorrentFileData.decode(readValue(buffer)!);
+      case 131: 
+        return TorrentMetaData.decode(readValue(buffer)!);
       default:
         return super.readValueOfType(type, buffer);
     }
@@ -239,15 +301,15 @@ class TorrentHostApi {
 
   final String pigeonVar_messageChannelSuffix;
 
-  /// 启动下载
-  Future<String> startDownload(String magnetUri, String savePath) async {
+  /// 启动下载（isStreaming = 在线播放临时会话，不进下载管理、完成不导出）
+  Future<String> startDownload(String magnetUri, String savePath, bool isStreaming) async {
     final String pigeonVar_channelName = 'dev.flutter.pigeon.bt_torrent.TorrentHostApi.startDownload$pigeonVar_messageChannelSuffix';
     final BasicMessageChannel<Object?> pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[magnetUri, savePath]);
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[magnetUri, savePath, isStreaming]);
     final List<Object?>? pigeonVar_replyList =
         await pigeonVar_sendFuture as List<Object?>?;
     if (pigeonVar_replyList == null) {
@@ -395,6 +457,59 @@ class TorrentHostApi {
       );
     } else {
       return (pigeonVar_replyList[0] as List<Object?>?)!.cast<TorrentFileData>();
+    }
+  }
+
+  /// 获取种子元数据（piece 长度、数量等）
+  Future<TorrentMetaData> getTorrentMeta(String infoHash) async {
+    final String pigeonVar_channelName = 'dev.flutter.pigeon.bt_torrent.TorrentHostApi.getTorrentMeta$pigeonVar_messageChannelSuffix';
+    final BasicMessageChannel<Object?> pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[infoHash]);
+    final List<Object?>? pigeonVar_replyList =
+        await pigeonVar_sendFuture as List<Object?>?;
+    if (pigeonVar_replyList == null) {
+      throw _createConnectionError(pigeonVar_channelName);
+    } else if (pigeonVar_replyList.length > 1) {
+      throw PlatformException(
+        code: pigeonVar_replyList[0]! as String,
+        message: pigeonVar_replyList[1] as String?,
+        details: pigeonVar_replyList[2],
+      );
+    } else if (pigeonVar_replyList[0] == null) {
+      throw PlatformException(
+        code: 'null-error',
+        message: 'Host platform returned null value for non-null return value.',
+      );
+    } else {
+      return (pigeonVar_replyList[0] as TorrentMetaData?)!;
+    }
+  }
+
+  /// 将在线播放会话转存为正式下载任务
+  Future<void> convertToDownload(String infoHash) async {
+    final String pigeonVar_channelName = 'dev.flutter.pigeon.bt_torrent.TorrentHostApi.convertToDownload$pigeonVar_messageChannelSuffix';
+    final BasicMessageChannel<Object?> pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[infoHash]);
+    final List<Object?>? pigeonVar_replyList =
+        await pigeonVar_sendFuture as List<Object?>?;
+    if (pigeonVar_replyList == null) {
+      throw _createConnectionError(pigeonVar_channelName);
+    } else if (pigeonVar_replyList.length > 1) {
+      throw PlatformException(
+        code: pigeonVar_replyList[0]! as String,
+        message: pigeonVar_replyList[1] as String?,
+        details: pigeonVar_replyList[2],
+      );
+    } else {
+      return;
     }
   }
 

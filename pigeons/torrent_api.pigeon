@@ -34,12 +34,20 @@ class TorrentFileData {
   final int sizeBytes;
 }
 
+/// 种子元数据（在线播放需要 piece 长度/数量）
+class TorrentMetaData {
+  final String name;
+  final int totalBytes;
+  final int pieceLength;
+  final int numPieces;
+}
+
 /// Host API — Dart 调用 Kotlin
 @HostApi()
 abstract class TorrentHostApi {
-  /// 启动下载
+  /// 启动下载（isStreaming = 在线播放临时会话，不进下载管理、完成不导出）
   @async
-  String startDownload(String magnetUri, String savePath);
+  String startDownload(String magnetUri, String savePath, bool isStreaming);
 
   /// 暂停下载
   @async
@@ -60,6 +68,14 @@ abstract class TorrentHostApi {
   /// 获取文件列表
   @async
   List<TorrentFileData> getFiles(String infoHash);
+
+  /// 获取种子元数据（piece 长度、数量等）
+  @async
+  TorrentMetaData getTorrentMeta(String infoHash);
+
+  /// 将在线播放会话转存为正式下载任务
+  @async
+  void convertToDownload(String infoHash);
 
   /// 设置 piece 优先级
   @async

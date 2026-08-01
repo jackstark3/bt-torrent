@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:bt_torrent/core/models/download_task.dart';
 import 'package:bt_torrent/core/models/torrent_info.dart';
 import 'package:bt_torrent/core/utils/extensions.dart';
 import 'package:bt_torrent/core/utils/magnet_parser.dart';
@@ -8,6 +9,7 @@ import 'package:bt_torrent/features/search/widgets/search_bar.dart' as custom;
 import 'package:bt_torrent/features/search/widgets/torrent_card.dart';
 import 'package:bt_torrent/providers/core_providers.dart';
 import 'package:bt_torrent/providers/download_providers.dart';
+import 'package:bt_torrent/providers/playback_providers.dart';
 import 'package:bt_torrent/providers/search_providers.dart';
 
 class SearchScreen extends ConsumerStatefulWidget {
@@ -101,6 +103,98 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           sortBy: _sortBy,
         );
     ref.read(searchResultsProvider.notifier).addToHistory(trimmed);
+  }
+
+  /// 在线播放：创建临时播放会话并进入播放器
+  Future<void> _playOnline(TorrentInfo torrent) async {
+    final magnet = torrent.magnetUri;
+    if (magnet == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('该结果没有磁力链接')),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _MetadataLoadingDialog(),
+    );
+
+    final result = await ref.read(startPlaybackAction).execute(magnet);
+    if (!mounted) return;
+    // 关闭"获取种子信息中"加载框
+    try {
+      Navigator.of(context).pop();
+    } catch (_) {}
+
+    if (result.isError) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('在线播放失败：${result.error}')),
+      );
+      return;
+    }
+
+    final session = result.value!;
+    final videos = session.videoFiles;
+    if (videos.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('该种子中没有可播放的视频文件')),
+      );
+      return;
+    }
+
+    int fileIndex = videos.first.index;
+    if (videos.length > 1) {
+      final picked = await _pickVideoFile(videos);
+      if (picked == null) return;
+      fileIndex = picked;
+    }
+    if (!mounted) return;
+
+    context.pushNamed(
+      'player',
+      pathParameters: {
+        'infoHash': session.infoHash,
+        'fileIndex': '$fileIndex',
+      },
+      queryParameters: {'stream': '1'},
+    );
+  }
+
+  /// 多视频种子：选择要播放的文件
+  Future<int?> _pickVideoFile(List<TorrentFileInfo> videos) {
+    return showModalBottomSheet<int>(
+      context: context,
+      builder: (context) {
+        final theme = Theme.of(context);
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  '选择要播放的视频（${videos.length} 个）',
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
+              ...videos.map(
+                (f) => ListTile(
+                  leading: const Icon(Icons.movie),
+                  title: Text(f.name,
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(f.sizeFormatted),
+                  onTap: () => Navigator.of(context).pop(f.index),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -225,7 +319,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                         width: 14,
                         height: 14,
                         child: CircularProgressIndicator(strokeWidth: 2)),
-                    error: (_, __) => const SizedBox.shrink(),
+                    error: (_, _) => const SizedBox.shrink(),
                   ),
                 ],
               ),
@@ -313,6 +407,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                               }
                             }
                           },
+                          onPlayOnline: () => _playOnline(torrent),
                           onCopyMagnet: () {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(content: Text('磁力链接已复制')),
@@ -369,6 +464,30 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           NavigationDestination(icon: Icon(Icons.download), label: '下载'),
           NavigationDestination(icon: Icon(Icons.settings), label: '设置'),
         ],
+      ),
+    );
+  }
+}
+
+/// 获取种子信息加载框
+class _MetadataLoadingDialog extends StatelessWidget {
+  const _MetadataLoadingDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Dialog(
+      child: Padding(
+        padding: EdgeInsets.all(24),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(width: 16),
+            Flexible(
+              child: Text('获取种子信息中...\n（连接 peers 获取元数据，可能需要几十秒）'),
+            ),
+          ],
+        ),
       ),
     );
   }

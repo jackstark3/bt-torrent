@@ -101,11 +101,14 @@ class TorrentApiImpl(
     override fun startDownload(
         magnetUri: String,
         savePath: String,
+        isStreaming: Boolean,
         callback: (Result<String>) -> Unit,
     ) {
-        Log.i(TAG, "startDownload: $magnetUri -> $savePath")
+        Log.i(TAG, "startDownload: $magnetUri -> $savePath, isStreaming=$isStreaming")
         scope.launch {
-            callback(engine.addTorrent(magnetUri, savePath).map { it.infoHash })
+            callback(
+                engine.addTorrent(magnetUri, savePath, isStreaming).map { it.infoHash }
+            )
         }
     }
 
@@ -182,6 +185,35 @@ class TorrentApiImpl(
                 )
             }
         ))
+    }
+
+    override fun getTorrentMeta(
+        infoHash: String,
+        callback: (Result<TorrentMetaData>) -> Unit,
+    ) {
+        val session = engine.getSession(infoHash)
+        if (session == null) {
+            callback(Result.failure(Exception("任务不存在: $infoHash")))
+            return
+        }
+        val progress = session.progress.value
+        val filesTotal = session.files.value.sumOf { it.sizeBytes }
+        callback(Result.success(
+            TorrentMetaData(
+                name = session.name,
+                totalBytes = if (progress.totalBytes > 0) progress.totalBytes else filesTotal,
+                pieceLength = session.pieceLength,
+                numPieces = session.numPieces.toLong(),
+            )
+        ))
+    }
+
+    override fun convertToDownload(
+        infoHash: String,
+        callback: (Result<Unit>) -> Unit,
+    ) {
+        Log.i(TAG, "convertToDownload: $infoHash")
+        callback(engine.convertToDownload(infoHash))
     }
 
     override fun setPiecePriority(

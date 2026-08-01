@@ -5,6 +5,7 @@ class TorrentCard extends StatelessWidget {
   final TorrentInfo torrent;
   final VoidCallback? onTap;
   final VoidCallback? onDownload;
+  final VoidCallback? onPlayOnline;
   final VoidCallback? onCopyMagnet;
 
   const TorrentCard({
@@ -12,6 +13,7 @@ class TorrentCard extends StatelessWidget {
     required this.torrent,
     this.onTap,
     this.onDownload,
+    this.onPlayOnline,
     this.onCopyMagnet,
   });
 
@@ -77,6 +79,15 @@ class TorrentCard extends StatelessWidget {
                     label: const Text('磁力'),
                     style: TextButton.styleFrom(
                         visualDensity: VisualDensity.compact),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: onPlayOnline,
+                    icon: const Icon(Icons.play_circle_outline, size: 18),
+                    label: const Text('在线播放'),
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
                   ),
                   const SizedBox(width: 8),
                   FilledButton.icon(

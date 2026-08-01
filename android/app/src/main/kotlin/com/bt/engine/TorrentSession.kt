@@ -75,7 +75,20 @@ class TorrentSession(
     @Volatile
     private var handle: TorrentHandle? = null
 
-    private var pieceLength: Long = 0
+    /** piece 大小（元数据就绪后设置） */
+    @Volatile
+    var pieceLength: Long = 0
+        private set
+
+    /** piece 总数（元数据就绪后设置） */
+    @Volatile
+    var numPieces: Int = 0
+        private set
+
+    /** 是否为在线播放临时会话（不进下载管理、完成时不导出） */
+    @Volatile
+    var isStreaming: Boolean = false
+
     private var manualPaused = false
 
     /** 关联 libtorrent handle（元数据就绪后调用） */
@@ -85,6 +98,7 @@ class TorrentSession(
         val ti = h.torrentFile()
         if (ti != null) {
             pieceLength = ti.pieceLength().toLong()
+            numPieces = ti.numPieces()
             updateFiles(loadFiles(ti))
             updateStatus(Status.DOWNLOADING)
         }
@@ -188,7 +202,7 @@ class TorrentSession(
         handle?.clearPieceDeadlines()
     }
 
-    /** 同步读取已下载的 piece 数据 */
+    /** 同步读取已下载的 piece 数据（支持跨文件 piece 与子目录） */
     fun readPiece(pieceIndex: Int): ByteArray? {
         val h = handle ?: return null
         val ti = h.torrentFile() ?: return null
@@ -197,35 +211,38 @@ class TorrentSession(
         val pieceSize = ti.pieceSize(pieceIndex)
         if (pieceSize <= 0) return null
 
-        val pieceOffset = pieceIndex.toLong() * ti.pieceLength()
+        val pieceLength = ti.pieceLength()
+        val pieceOffset = pieceIndex.toLong() * pieceLength
         val files = ti.files()
         val numFiles = files.numFiles()
+        val buffer = ByteArray(pieceSize)
+        var written = 0
 
-        // 定位 piece 所在文件并读取
         var acc = 0L
         for (i in 0 until numFiles) {
             val size = files.fileSize(i)
-            if (pieceOffset < acc + size || (i == numFiles - 1)) {
-                val offsetInFile = pieceOffset - acc
-                val file = File(savePath, files.fileName(i))
+            val fileEnd = acc + size
+            if (pieceOffset < fileEnd && pieceOffset + pieceSize > acc) {
+                val startInFile = maxOf(0L, pieceOffset - acc)
+                val endInFile = minOf(size, pieceOffset + pieceSize - acc)
+                val file = File(savePath, files.filePath(i))
                 if (!file.exists()) return null
 
-                val toRead = minOf(pieceSize.toLong(), size - offsetInFile).toInt()
-                val buffer = ByteArray(pieceSize)
                 try {
                     RandomAccessFile(file, "r").use { raf ->
-                        raf.seek(offsetInFile)
-                        raf.readFully(buffer, 0, toRead)
+                        raf.seek(startInFile)
+                        val count = (endInFile - startInFile).toInt()
+                        raf.readFully(buffer, written, count)
+                        written += count
                     }
-                    return buffer
                 } catch (e: Exception) {
                     Log.w(TAG, "读取 piece $pieceIndex 失败: $e")
                     return null
                 }
             }
-            acc += size
+            acc = fileEnd
         }
-        return null
+        return if (written == pieceSize) buffer else null
     }
 
     /** 更新文件列表 */

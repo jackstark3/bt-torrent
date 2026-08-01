@@ -173,6 +173,22 @@ class DownloadRepositoryImpl implements DownloadRepository {
     }
 
     final session = result.value!;
+    return _registerSession(session);
+  }
+
+  /// 采纳已存在的引擎会话为正式下载任务（在线播放转存）
+  @override
+  Future<Result<DownloadTask>> adoptSession(String infoHash) async {
+    final session = _engine.getSession(infoHash);
+    if (session == null) {
+      return Result.error('引擎会话不存在: $infoHash');
+    }
+    _logger.info('采纳会话为下载任务: $infoHash');
+    return _registerSession(session);
+  }
+
+  /// 注册会话到下载管理（任务记录、控制器、持久化、进度订阅）
+  Future<Result<DownloadTask>> _registerSession(TorrentSession session) async {
     final now = DateTime.now();
     _addedAt[session.infoHash] = now;
     _completedTasks.remove(session.infoHash);
@@ -187,8 +203,8 @@ class DownloadRepositoryImpl implements DownloadRepository {
     await _upsertPersistedTask(
       session.infoHash,
       name: session.name,
-      magnetUri: magnetUri,
-      savePath: savePath,
+      magnetUri: session.magnetUri,
+      savePath: session.savePath,
       completed: false,
     );
 

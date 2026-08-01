@@ -39,7 +39,12 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) {
           final infoHash = state.pathParameters['infoHash']!;
           final fileIndex = int.parse(state.pathParameters['fileIndex']!);
-          return PlayerScreen(infoHash: infoHash, fileIndex: fileIndex);
+          final streaming = state.uri.queryParameters['stream'] == '1';
+          return PlayerScreen(
+            infoHash: infoHash,
+            fileIndex: fileIndex,
+            streaming: streaming,
+          );
         },
       ),
       GoRoute(
@@ -90,7 +95,7 @@ class BtApp extends ConsumerWidget {
       themeMode: darkModeAsync.when(
         data: (dark) => dark ? ThemeMode.dark : ThemeMode.light,
         loading: () => ThemeMode.system,
-        error: (_, __) => ThemeMode.system,
+        error: (_, _) => ThemeMode.system,
       ),
     );
   }

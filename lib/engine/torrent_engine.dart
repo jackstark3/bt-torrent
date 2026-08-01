@@ -33,11 +33,15 @@ class TorrentEngine {
 
   Future<Result<TorrentSession>> startDownload(
     String magnetUri,
-    String savePath,
+    String savePath, {
+    bool isStreaming = false,
+  }
   ) async {
     try {
-      _logger.info('启动下载: $magnetUri');
-      final infoHash = await _hostApi.startDownload(magnetUri, savePath);
+      _logger.info(
+          '启动下载: $magnetUri${isStreaming ? ' [在线播放]' : ''} -> $savePath');
+      final infoHash =
+          await _hostApi.startDownload(magnetUri, savePath, isStreaming);
       final session = TorrentSession(
         infoHash: infoHash,
         name: '获取种子信息中...',
@@ -136,6 +140,28 @@ class TorrentEngine {
               ))
           .toList());
     } catch (e) {
+      return Result.error('$e');
+    }
+  }
+
+  /// 获取种子元数据（piece 长度、数量等，在线播放使用）
+  Future<Result<TorrentMetaData>> getTorrentMeta(String infoHash) async {
+    try {
+      final meta = await _hostApi.getTorrentMeta(infoHash);
+      return Result.success(meta);
+    } catch (e) {
+      _logger.error('获取种子元数据失败', e);
+      return Result.error('$e');
+    }
+  }
+
+  /// 将在线播放会话转存为正式下载任务
+  Future<Result<void>> convertToDownload(String infoHash) async {
+    try {
+      await _hostApi.convertToDownload(infoHash);
+      return Result.success(null);
+    } catch (e) {
+      _logger.error('转存下载任务失败', e);
       return Result.error('$e');
     }
   }
