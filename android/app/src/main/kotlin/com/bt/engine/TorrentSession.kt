@@ -3,6 +3,7 @@ package com.bt.engine
 import android.util.Log
 import java.io.File
 import java.io.RandomAccessFile
+import java.security.MessageDigest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -259,7 +260,41 @@ class TorrentSession(
             }
             acc = fileEnd
         }
-        return if (written == pieceSize) buffer else null
+        if (written != pieceSize) return null
+
+        // 校验 piece 哈希：libtorrent 磁盘写缓存可能尚未落盘，读到的是空/旧数据。
+        // 不匹配时返回 null，由 Dart 端轮询重试，直到数据真正可读。
+        if (!verifyPieceHash(ti, pieceIndex, buffer)) {
+            maybeLogPieceMismatch(pieceIndex)
+            return null
+        }
+        return buffer
+    }
+
+    /** 用种子元数据里的 piece 哈希校验读出的数据 */
+    private fun verifyPieceHash(
+        ti: TorrentInfo,
+        pieceIndex: Int,
+        data: ByteArray,
+    ): Boolean {
+        return try {
+            val digest = MessageDigest.getInstance("SHA-1").digest(data)
+            val actual = digest.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+            actual.equals(ti.hashForPiece(pieceIndex).toHex(), ignoreCase = true)
+        } catch (e: Exception) {
+            Log.w(TAG, "校验 piece 哈希失败: $e")
+            false
+        }
+    }
+
+    private var lastPieceWarnMs = 0L
+
+    private fun maybeLogPieceMismatch(pieceIndex: Int) {
+        val now = System.currentTimeMillis()
+        if (now - lastPieceWarnMs > 5000) {
+            lastPieceWarnMs = now
+            Log.w(TAG, "piece $pieceIndex 哈希不匹配（写缓存未落盘？），等待重试")
+        }
     }
 
     /** 更新文件列表 */
