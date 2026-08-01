@@ -1,0 +1,76 @@
+name: bt_torrent
+description: "Android 种子搜索器 - 搜索、下载、预览种子视频"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # 状态管理
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
+
+  # 路由
+  go_router: ^14.8.1
+
+  # 网络
+  dio: ^5.7.0
+
+  # HTML 解析
+  html: ^0.15.5
+  xml: ^6.5.0
+
+  # 数据库
+  drift: ^2.25.1
+  sqlite3_flutter_libs: ^0.5.30
+
+  # JSON
+  json_annotation: ^4.9.0
+
+  # 本地存储
+  shared_preferences: ^2.3.4
+
+  # 图片
+  cached_network_image: ^3.4.1
+
+  # 视频
+  video_player: ^2.9.3
+
+  # HTTP 服务器（边下边播）
+  shelf: ^1.4.2
+  shelf_router: ^1.1.4
+
+  # 文件操作
+  path_provider: ^2.1.5
+  permission_handler: ^11.3.1
+
+  # 工具
+  intl: ^0.19.0
+  uuid: ^4.5.1
+  freezed_annotation: ^2.4.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+  # 代码生成
+  build_runner: ^2.4.14
+  riverpod_generator: ^2.6.3
+  json_serializable: ^6.9.4
+  drift_dev: ^2.25.1
+  freezed: ^2.5.8
+
+  # 测试
+  mocktail: ^1.0.4
+  pigeon: ^26.1.0
+
+flutter:
+  uses-material-design: true

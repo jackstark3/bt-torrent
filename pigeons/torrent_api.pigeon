@@ -1,0 +1,88 @@
+import 'package:pigeon/pigeon.dart';
+
+@ConfigurePigeon(PigeonOptions(
+  dartOut: 'lib/engine/pigeon/torrent_api.gen.dart',
+  kotlinOut:
+      'android/app/src/main/kotlin/com/bt/bridge/TorrentApi.gen.kt',
+  kotlinOptions: KotlinOptions(
+    package: 'com.bt.bridge',
+    errorClassName: 'TorrentApiException',
+  ),
+))
+
+/// 下载进度数据
+class DownloadProgressData {
+  final String infoHash;
+  final String name;
+  final int totalBytes;
+  final int downloadedBytes;
+  final int uploadBytes;
+  final double progressPercent;
+  final int downloadSpeed;
+  final int uploadSpeed;
+  final int etaSeconds;
+  final int status;
+  final int connectedPeers;
+  final int connectedSeeds;
+}
+
+/// 种子文件信息
+class TorrentFileData {
+  final int index;
+  final String path;
+  final String name;
+  final int sizeBytes;
+}
+
+/// Host API — Dart 调用 Kotlin
+@HostApi()
+abstract class TorrentHostApi {
+  /// 启动下载
+  @async
+  String startDownload(String magnetUri, String savePath);
+
+  /// 暂停下载
+  @async
+  void pauseDownload(String infoHash);
+
+  /// 恢复下载
+  @async
+  void resumeDownload(String infoHash);
+
+  /// 移除下载
+  @async
+  void removeDownload(String infoHash, bool deleteFiles);
+
+  /// 获取进度
+  @async
+  DownloadProgressData getProgress(String infoHash);
+
+  /// 获取文件列表
+  @async
+  List<TorrentFileData> getFiles(String infoHash);
+
+  /// 设置 piece 优先级
+  @async
+  void setPiecePriority(String infoHash, int pieceIndex, int priority);
+
+  /// 设置 piece deadline
+  @async
+  void setPieceDeadline(String infoHash, int pieceIndex, int millis);
+
+  /// 读取已下载 piece 数据
+  @async
+  Uint8List readPiece(String infoHash, int pieceIndex);
+}
+
+/// Flutter API — Kotlin 调用 Dart（事件回调）
+@FlutterApi()
+abstract class TorrentFlutterApi {
+  /// 进度更新回调
+  void onProgressChanged(DownloadProgressData progress);
+
+  /// 下载完成回调
+  void onDownloadFinished(String infoHash);
+
+  /// 下载错误回调
+  void onDownloadError(String infoHash, String error);
+}
