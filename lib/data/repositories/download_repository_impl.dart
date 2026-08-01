@@ -343,7 +343,9 @@ class DownloadRepositoryImpl implements DownloadRepository {
   DownloadTask _taskFromSession(TorrentSession session, DateTime addedAt) {
     final progress = session.currentProgress;
     final status = _mapStatus(session.currentStatus);
-    final isComplete = status == DownloadStatus.completed;
+    final isComplete = status == DownloadStatus.completed ||
+        status == DownloadStatus.seeding ||
+        progress.progressPercent >= 1.0;
     return DownloadTask(
       infoHash: session.infoHash,
       name: session.name,

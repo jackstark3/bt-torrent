@@ -136,8 +136,10 @@ class TorrentSession(
             val state = st.state()
             _status.value = when {
                 manualPaused -> Status.PAUSED
-                state == TorrentStatus.State.SEEDING -> Status.SEEDING
-                state == TorrentStatus.State.FINISHED || progress >= 1.0 -> Status.COMPLETED
+                // 下载完成后统一视为完成（做种状态也归入完成，触发导出）
+                state == TorrentStatus.State.SEEDING ||
+                    state == TorrentStatus.State.FINISHED ||
+                    progress >= 1.0 -> Status.COMPLETED
                 state == TorrentStatus.State.CHECKING_FILES ||
                     state == TorrentStatus.State.CHECKING_RESUME_DATA -> Status.CHECKING
                 state == TorrentStatus.State.DOWNLOADING ||

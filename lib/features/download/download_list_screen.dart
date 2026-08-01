@@ -47,6 +47,16 @@ class DownloadListScreen extends ConsumerWidget {
                   'downloadDetail',
                   pathParameters: {'infoHash': task.infoHash},
                 ),
+                onPlay: () {
+                  final videoFiles =
+                      task.files.where((f) => f.isVideo).toList();
+                  if (videoFiles.isEmpty) return;
+                  context.pushNamed('player',
+                      pathParameters: {
+                        'infoHash': task.infoHash,
+                        'fileIndex': '${videoFiles.first.index}',
+                      });
+                },
                 onPauseResume: () {
                   if (task.status == DownloadStatus.downloading) {
                     ref.read(pauseDownloadAction).execute(task.infoHash);
@@ -88,12 +98,14 @@ class DownloadListScreen extends ConsumerWidget {
 class _DownloadItem extends StatelessWidget {
   final DownloadTask task;
   final VoidCallback onTap;
+  final VoidCallback onPlay;
   final VoidCallback onPauseResume;
   final VoidCallback onRemove;
 
   const _DownloadItem({
     required this.task,
     required this.onTap,
+    required this.onPlay,
     required this.onPauseResume,
     required this.onRemove,
   });
@@ -101,6 +113,16 @@ class _DownloadItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isComplete = task.status == DownloadStatus.completed ||
+        task.progress >= 1.0;
+    final hasVideo = task.files.any((f) => f.isVideo);
+    final statusColor = switch (task.status) {
+      DownloadStatus.completed => Colors.green,
+      DownloadStatus.error => theme.colorScheme.error,
+      DownloadStatus.paused => Colors.orange,
+      DownloadStatus.checking => Colors.blueGrey,
+      _ => theme.colorScheme.primary,
+    };
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -121,6 +143,23 @@ class _DownloadItem extends StatelessWidget {
                         style: theme.textTheme.titleSmall
                             ?.copyWith(fontWeight: FontWeight.w600)),
                   ),
+                  // 状态徽章
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      isComplete ? '已完成' : task.status.displayName,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: statusColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
                   IconButton(
                     icon: const Icon(Icons.close, size: 20),
                     onPressed: onRemove,
@@ -129,23 +168,58 @@ class _DownloadItem extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 8),
-              LinearProgressIndicator(value: task.progress),
+              LinearProgressIndicator(
+                value: task.progress,
+                color: isComplete ? Colors.green : null,
+              ),
               const SizedBox(height: 8),
               Row(
                 children: [
-                  Text(task.progressFormatted,
-                      style: theme.textTheme.bodySmall),
-                  const SizedBox(width: 12),
-                  Text(task.speedFormatted,
-                      style: theme.textTheme.bodySmall),
-                  const SizedBox(width: 12),
-                  Text(
-                    task.status == DownloadStatus.checking ||
-                            task.status == DownloadStatus.queued
-                        ? task.status.displayName
-                        : 'ETA: ${task.etaFormatted}',
-                      style: theme.textTheme.bodySmall),
+                  if (isComplete) ...[
+                    Text('100%', style: theme.textTheme.bodySmall),
+                    const SizedBox(width: 12),
+                    Text(task.sizeFormatted,
+                        style: theme.textTheme.bodySmall),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        '文件已保存到"下载"目录',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                    ),
+                  ] else ...[
+                    Text(task.progressFormatted,
+                        style: theme.textTheme.bodySmall),
+                    const SizedBox(width: 12),
+                    Text(task.speedFormatted,
+                        style: theme.textTheme.bodySmall),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        task.status == DownloadStatus.checking ||
+                                task.status == DownloadStatus.queued
+                            ? task.status.displayName
+                            : 'ETA: ${task.etaFormatted}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
+                  ],
                   const Spacer(),
+                  // 已完成且有视频 → 播放按钮；否则暂停/继续
+                  if (isComplete && hasVideo)
+                    IconButton(
+                      icon: const Icon(Icons.play_circle_fill,
+                          color: Colors.green, size: 28),
+                      tooltip: '播放',
+                      onPressed: onPlay,
+                      visualDensity: VisualDensity.compact,
+                    )
+                  else
                   IconButton(
                     icon: Icon(
                       task.status == DownloadStatus.downloading
