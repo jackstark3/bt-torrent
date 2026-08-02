@@ -66,7 +66,9 @@ class LeetXProvider extends SearchProvider {
 
       for (final row in rows) {
         try {
-          final nameEl = row.querySelector('td.name a:nth-child(2)');
+          // 名称单元格最后一个 a 是标题链接（html 包不支持 :nth-child）
+          final nameLinks = row.querySelectorAll('td.name a');
+          final nameEl = nameLinks.isNotEmpty ? nameLinks.last : null;
           if (nameEl == null) continue;
 
           final title = nameEl.text.trim();

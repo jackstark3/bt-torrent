@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:bt_torrent/core/models/download_task.dart';
 import 'package:bt_torrent/core/models/torrent_info.dart';
@@ -107,7 +108,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   /// 在线播放：创建临时播放会话并进入播放器
   Future<void> _playOnline(TorrentInfo torrent) async {
-    final magnet = torrent.magnetUri;
+    final magnet = await _resolveMagnet(torrent);
+    if (!mounted) return;
     if (magnet == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('该结果没有磁力链接')),
@@ -161,6 +163,40 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       },
       queryParameters: {'stream': '1'},
     );
+  }
+
+  /// 获取磁力链接：结果自带则直接使用，否则从详情页懒解析
+  Future<String?> _resolveMagnet(TorrentInfo torrent) async {
+    if (torrent.magnetUri != null) return torrent.magnetUri;
+    final detailUrl = torrent.detailUrl;
+    if (detailUrl == null) return null;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Dialog(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(width: 16),
+              Flexible(child: Text('正在解析磁力链接...')),
+            ],
+          ),
+        ),
+      ),
+    );
+    try {
+      return await ref.read(magnetResolverProvider).resolve(detailUrl);
+    } finally {
+      if (mounted) {
+        try {
+          Navigator.of(context).pop();
+        } catch (_) {}
+      }
+    }
   }
 
   /// 多视频种子：选择要播放的文件
@@ -355,13 +391,30 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 8),
                       itemCount: result.results.length +
-                          (result.isComplete ? 0 : 1),
+                          (result.isComplete && !result.hasMore ? 0 : 1),
                       itemBuilder: (context, index) {
                         if (index >= result.results.length) {
-                          return const Center(
+                          if (!result.isComplete || result.isLoadingMore) {
+                            return const Center(
+                                child: Padding(
+                                    padding: EdgeInsets.all(16),
+                                    child: CircularProgressIndicator()));
+                          }
+                          if (result.hasMore) {
+                            return Center(
                               child: Padding(
-                                  padding: EdgeInsets.all(16),
-                                  child: CircularProgressIndicator()));
+                                padding: const EdgeInsets.all(12),
+                                child: OutlinedButton.icon(
+                                  onPressed: () => ref
+                                      .read(searchResultsProvider.notifier)
+                                      .loadMore(),
+                                  icon: const Icon(Icons.expand_more),
+                                  label: const Text('加载更多'),
+                                ),
+                              ),
+                            );
+                          }
+                          return const SizedBox.shrink();
                         }
                         final torrent = result.results[index];
                         return TorrentCard(
@@ -375,7 +428,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                             }
                           },
                           onDownload: () async {
-                            final magnet = torrent.magnetUri;
+                            final magnet = await _resolveMagnet(torrent);
+                            if (!context.mounted) return;
                             if (magnet == null) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
@@ -408,7 +462,18 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                             }
                           },
                           onPlayOnline: () => _playOnline(torrent),
-                          onCopyMagnet: () {
+                          onCopyMagnet: () async {
+                            final magnet = await _resolveMagnet(torrent);
+                            if (!context.mounted) return;
+                            if (magnet == null) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content: Text('该结果没有磁力链接')),
+                              );
+                              return;
+                            }
+                            await Clipboard.setData(ClipboardData(text: magnet));
+                            if (!context.mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(content: Text('磁力链接已复制')),
                             );

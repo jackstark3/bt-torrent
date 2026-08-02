@@ -12,6 +12,7 @@ import 'package:bt_torrent/data/remote/providers/piratebay_provider.dart';
 import 'package:bt_torrent/data/remote/providers/solidtorrents_provider.dart';
 import 'package:bt_torrent/data/remote/providers/torrentgalaxy_provider.dart';
 import 'package:bt_torrent/data/remote/providers/torznab_provider.dart';
+import 'package:bt_torrent/data/remote/magnet_resolver.dart';
 import 'package:bt_torrent/data/remote/search_aggregator.dart';
 import 'package:bt_torrent/data/remote/search_provider.dart';
 import 'package:bt_torrent/data/repositories/download_repository_impl.dart';
@@ -27,7 +28,7 @@ final dioProvider = Provider<Dio>((ref) {
   final proxy = ref.watch(proxyConfigProvider).valueOrNull ?? '';
   final dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 8),
-    receiveTimeout: const Duration(seconds: 8),
+    receiveTimeout: const Duration(seconds: 20),
     followRedirects: true,
     maxRedirects: 3,
   ));
@@ -91,6 +92,11 @@ final searchProvidersProvider = Provider<List<SearchProvider>>((ref) {
 final searchAggregatorProvider = Provider<SearchAggregator>((ref) {
   final providers = ref.watch(searchProvidersProvider);
   return SearchAggregator(providers);
+});
+
+/// 磁力解析器（1337x 等详情页懒解析）
+final magnetResolverProvider = Provider<MagnetResolver>((ref) {
+  return MagnetResolver(ref.watch(dioProvider));
 });
 
 /// 搜索仓库

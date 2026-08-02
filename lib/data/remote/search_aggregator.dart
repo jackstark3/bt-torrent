@@ -91,14 +91,9 @@ class SearchAggregator {
         );
       }
 
-      // 流式返回中间结果
+      // 流式返回中间结果：不过滤，全部保留，按相关度优先排序
       final queryText = query.query.trim();
-      final filtered = queryText.isEmpty
-          ? allResults
-          : allResults
-              .where((r) => TitleMatcher.matches(r.title, queryText))
-              .toList();
-      final sorted = _sortResults(filtered, query.sortBy, queryText);
+      final sorted = sortAggregatedResults(allResults, query.sortBy, queryText);
       yield AggregatedResult(
         results: List.unmodifiable(sorted),
         sourceStatuses: Map.unmodifiable(sourceStatuses),
@@ -134,38 +129,6 @@ class SearchAggregator {
     }
   }
 
-  /// 排序结果
-  List<TorrentInfo> _sortResults(
-    List<TorrentInfo> results,
-    SortBy sortBy,
-    String query,
-  ) {
-    final sorted = List<TorrentInfo>.from(results);
-    switch (sortBy) {
-      case SortBy.seeders:
-        sorted.sort((a, b) => b.seeders.compareTo(a.seeders));
-      case SortBy.leechers:
-        sorted.sort((a, b) => b.leechers.compareTo(a.leechers));
-      case SortBy.size:
-        sorted.sort((a, b) => b.sizeBytes.compareTo(a.sizeBytes));
-      case SortBy.date:
-        sorted.sort((a, b) {
-          final aDate = a.addedDate ?? DateTime(2000);
-          final bDate = b.addedDate ?? DateTime(2000);
-          return bDate.compareTo(aDate);
-        });
-      case SortBy.relevance:
-        // 按标题匹配度打分排序，同分时按做种数
-        sorted.sort((a, b) {
-          final scoreCompare = TitleMatcher.score(b.title, query)
-              .compareTo(TitleMatcher.score(a.title, query));
-          if (scoreCompare != 0) return scoreCompare;
-          return b.seeders.compareTo(a.seeders);
-        });
-    }
-    return sorted;
-  }
-
   /// 搜索源健康检查
   Future<Map<String, bool>> healthCheck() async {
     final statuses = <String, bool>{};
@@ -184,6 +147,55 @@ class SearchAggregator {
   }
 }
 
+/// 排序结果：相关度优先，匹配度高的排前面、低的排后面，
+/// 同相关度内再按用户选择的排序键排列
+List<TorrentInfo> sortAggregatedResults(
+  List<TorrentInfo> results,
+  SortBy sortBy,
+  String query,
+) {
+  final sorted = List<TorrentInfo>.from(results);
+  final queryText = query.trim();
+
+  int compareByRelevanceThen(
+    TorrentInfo a,
+    TorrentInfo b,
+    int Function(TorrentInfo, TorrentInfo) tiebreak,
+  ) {
+    final sa = TitleMatcher.score(a.title, queryText);
+    final sb = TitleMatcher.score(b.title, queryText);
+    final cmp = sb.compareTo(sa);
+    if (cmp != 0) return cmp;
+    return tiebreak(a, b);
+  }
+
+  switch (sortBy) {
+    case SortBy.seeders:
+      sorted.sort((a, b) =>
+          compareByRelevanceThen(a, b, (x, y) => y.seeders.compareTo(x.seeders)));
+    case SortBy.leechers:
+      sorted.sort((a, b) => compareByRelevanceThen(
+          a, b, (x, y) => y.leechers.compareTo(x.leechers)));
+    case SortBy.size:
+      sorted.sort((a, b) =>
+          compareByRelevanceThen(a, b, (x, y) => y.sizeBytes.compareTo(x.sizeBytes)));
+    case SortBy.date:
+      sorted.sort((a, b) => compareByRelevanceThen(a, b, (x, y) {
+            final xDate = x.addedDate ?? DateTime(2000);
+            final yDate = y.addedDate ?? DateTime(2000);
+            return yDate.compareTo(xDate);
+          }));
+    case SortBy.relevance:
+      sorted.sort((a, b) {
+        final scoreCompare = TitleMatcher.score(b.title, query)
+            .compareTo(TitleMatcher.score(a.title, query));
+        if (scoreCompare != 0) return scoreCompare;
+        return b.seeders.compareTo(a.seeders);
+      });
+  }
+  return sorted;
+}
+
 /// 聚合搜索结果
 class AggregatedResult {
   final List<TorrentInfo> results;
@@ -192,6 +204,8 @@ class AggregatedResult {
   final int totalSources;
   final int completedSources;
   final bool isCached;
+  final bool hasMore;
+  final bool isLoadingMore;
 
   const AggregatedResult({
     required this.results,
@@ -200,6 +214,8 @@ class AggregatedResult {
     this.totalSources = 0,
     this.completedSources = 0,
     this.isCached = false,
+    this.hasMore = false,
+    this.isLoadingMore = false,
   });
 
   /// 成功的搜索源数量

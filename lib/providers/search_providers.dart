@@ -1,7 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bt_torrent/core/models/search_query.dart';
 import 'package:bt_torrent/core/models/torrent_info.dart';
-import 'package:bt_torrent/core/utils/title_matcher.dart';
 import 'package:bt_torrent/data/remote/search_aggregator.dart';
 import 'package:bt_torrent/providers/core_providers.dart';
 
@@ -17,6 +16,11 @@ final searchResultsProvider =
 );
 
 class SearchNotifier extends AsyncNotifier<AggregatedResult> {
+  final Map<String, TorrentInfo> _byHash = {};
+  SearchQuery? _activeQuery;
+  int _page = 1;
+  bool _loadingMore = false;
+
   @override
   Future<AggregatedResult> build() async {
     return const AggregatedResult(
@@ -41,9 +45,45 @@ class SearchNotifier extends AsyncNotifier<AggregatedResult> {
     );
 
     ref.read(searchQueryProvider.notifier).state = searchQuery;
+    _activeQuery = searchQuery;
+    _page = 1;
+    _byHash.clear();
 
     state = const AsyncLoading();
 
+    await _runSearch(searchQuery, append: false);
+  }
+
+  /// 加载下一页结果（追加到当前列表）
+  Future<void> loadMore() async {
+    final query = _activeQuery;
+    if (query == null || _loadingMore || state.value?.isLoadingMore == true) {
+      return;
+    }
+    _loadingMore = true;
+    // 通知 UI 显示加载中
+    final current = state.value;
+    if (current != null) {
+      state = AsyncData(AggregatedResult(
+        results: current.results,
+        sourceStatuses: current.sourceStatuses,
+        isComplete: current.isComplete,
+        totalSources: current.totalSources,
+        completedSources: current.completedSources,
+        isCached: current.isCached,
+        hasMore: current.hasMore,
+        isLoadingMore: true,
+      ));
+    }
+    try {
+      final pageQuery = query.copyWith(page: _page + 1);
+      await _runSearch(pageQuery, append: true);
+    } finally {
+      _loadingMore = false;
+    }
+  }
+
+  Future<void> _runSearch(SearchQuery searchQuery, {required bool append}) async {
     try {
       final stream = ref.read(searchAggregatorProvider).searchStream(searchQuery);
       AggregatedResult last = const AggregatedResult(
@@ -54,28 +94,75 @@ class SearchNotifier extends AsyncNotifier<AggregatedResult> {
 
       await for (final aggResult in stream) {
         last = aggResult;
-        state = AsyncData(aggResult);
+        _mergeResults(aggResult.results);
+        state = AsyncData(_mergedResult(last, isLoadingMore: _loadingMore));
       }
 
-      // 所有搜索源都失败时，回退到本地缓存
-      if (last.results.isEmpty) {
+      if (append) {
+        _page = searchQuery.page;
+        state = AsyncData(_mergedResult(
+          last,
+          isLoadingMore: false,
+          hasMore: last.resultCount >= 10,
+        ));
+        return;
+      }
+
+      // 第一页：所有搜索源都失败/为空时，回退到本地缓存
+      if (_byHash.isEmpty) {
         final cached =
-            await ref.read(searchRepositoryProvider).searchCached(query);
-        final matched = cached
-            .where((r) => TitleMatcher.matches(r.title, query))
-            .toList();
-        if (matched.isNotEmpty) {
+            await ref.read(searchRepositoryProvider).searchCached(searchQuery.query);
+        if (cached.isNotEmpty) {
+          for (final t in cached) {
+            _byHash[t.infoHash] = t;
+          }
           state = AsyncData(AggregatedResult(
-            results: matched,
+            results: sortAggregatedResults(
+                _byHash.values.toList(), searchQuery.sortBy, searchQuery.query),
             sourceStatuses: const {},
             isComplete: true,
             isCached: true,
           ));
+          return;
         }
       }
+
+      state = AsyncData(_mergedResult(
+        last,
+        hasMore: last.resultCount >= 10,
+      ));
     } catch (e, st) {
-      state = AsyncError(e, st);
+      if (!append) {
+        state = AsyncError(e, st);
+      }
     }
+  }
+
+  void _mergeResults(List<TorrentInfo> results) {
+    for (final t in results) {
+      _byHash.putIfAbsent(t.infoHash, () => t);
+    }
+  }
+
+  AggregatedResult _mergedResult(
+    AggregatedResult latest, {
+    bool isLoadingMore = false,
+    bool hasMore = false,
+  }) {
+    final query = _activeQuery;
+    return AggregatedResult(
+      results: query == null
+          ? _byHash.values.toList()
+          : sortAggregatedResults(
+              _byHash.values.toList(), query.sortBy, query.query),
+      sourceStatuses: latest.sourceStatuses,
+      isComplete: latest.isComplete,
+      totalSources: latest.totalSources,
+      completedSources: latest.completedSources,
+      isCached: latest.isCached,
+      hasMore: hasMore || latest.hasMore,
+      isLoadingMore: isLoadingMore,
+    );
   }
 
   /// 添加搜索历史
