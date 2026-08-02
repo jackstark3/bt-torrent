@@ -26,8 +26,8 @@ class PieceStreamDataSource implements StreamDataSource {
     required this.files,
     required this.pieceLength,
     required this.numPieces,
-    // 单次等待不超过 5 秒，超出返回 503 让播放器重试
-    this.pieceTimeout = const Duration(seconds: 5),
+    // 单次等待 6 秒（低于播放器 8 秒读超时），超出返回 503
+    this.pieceTimeout = const Duration(seconds: 6),
   });
 
   /// 文件在种子中的全局起始偏移（多文件种子 piece 按文件拼接）

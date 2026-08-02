@@ -81,6 +81,8 @@ class ConvertPlaybackToDownloadUseCase {
     if (converted.isError) {
       return Result.error(converted.error!);
     }
+    // 标记 Dart 侧会话为非流播，使其进入下载管理列表
+    engine.getSession(infoHash)?.isStreaming = false;
 
     final adopted = await downloadRepository.adoptSession(infoHash);
     if (adopted.isError) {

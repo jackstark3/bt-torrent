@@ -1,5 +1,6 @@
 import 'package:bt_torrent/core/models/download_task.dart';
 import 'package:bt_torrent/core/utils/logger.dart';
+import 'package:bt_torrent/core/utils/result.dart';
 import 'package:bt_torrent/engine/http_stream_server.dart';
 import 'package:bt_torrent/engine/piece_stream_source.dart';
 import 'package:bt_torrent/engine/stream_manager.dart';
@@ -63,6 +64,37 @@ class StreamingService {
   /// 拖拽跳转
   Future<void> onSeek(String infoHash, int piece) async {
     await _managers[infoHash]?.onSeek(infoHash, piece);
+  }
+
+  /// 等待文件开头 [bytesNeeded] 字节的数据可读（播放器初始化前调用，
+  /// 避免播放器打开流时拿不到数据直接报"无法播放"）
+  Future<Result<void>> waitForInitialData({
+    required String infoHash,
+    required int pieceLength,
+    required int bytesNeeded,
+    Duration timeout = const Duration(seconds: 90),
+  }) async {
+    if (pieceLength <= 0 || bytesNeeded <= 0) {
+      return Result.success(null);
+    }
+    final lastPiece = (bytesNeeded - 1) ~/ pieceLength;
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      var ready = true;
+      for (int p = 0; p <= lastPiece; p++) {
+        final r = await _engine.readPiece(infoHash, p);
+        if (r.isError) {
+          ready = false;
+          break;
+        }
+      }
+      if (ready) {
+        _logger.info('开头 $bytesNeeded 字节已就绪，开始播放');
+        return Result.success(null);
+      }
+      await Future.delayed(const Duration(milliseconds: 500));
+    }
+    return Result.error('等待开头数据超时，可能没有做种者');
   }
 
   /// 结束在线播放（某个文件或整个会话）

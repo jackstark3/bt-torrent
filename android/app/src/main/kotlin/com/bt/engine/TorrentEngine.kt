@@ -283,9 +283,8 @@ class TorrentEngine private constructor(private val context: Context) {
     /** 获取下载任务 */
     fun getSession(infoHash: String): TorrentSession? = sessions[infoHash]
 
-    /** 获取所有正式下载任务（在线播放会话不出现在下载管理中） */
-    fun getAllSessions(): List<TorrentSession> =
-        sessions.values.filter { !it.isStreaming }
+    /** 获取所有会话（进度推送需要包含在线播放会话） */
+    fun getAllSessions(): List<TorrentSession> = sessions.values.toList()
 
     /** 将在线播放会话转存为正式下载任务 */
     fun convertToDownload(infoHash: String): Result<Unit> {

@@ -36,7 +36,7 @@ class HttpStreamServer {
   final AppLogger _logger = AppLogger('HttpStreamServer');
 
   /// 单次响应最大字节数（开放区间请求按此分块，避免阻塞整个文件）
-  static const int _maxChunkBytes = 8 * 1024 * 1024; // 8MB
+  static const int _maxChunkBytes = 2 * 1024 * 1024; // 2MB
 
   HttpServer? _server;
   int _port = 0;

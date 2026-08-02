@@ -47,6 +47,7 @@ class TorrentEngine {
         name: '获取种子信息中...',
         magnetUri: magnetUri,
         savePath: savePath,
+        isStreaming: isStreaming,
       );
       _sessions[infoHash] = session;
       return Result.success(session);
@@ -168,7 +169,9 @@ class TorrentEngine {
 
   TorrentSession? getSession(String infoHash) => _sessions[infoHash];
 
-  List<TorrentSession> getAllSessions() => _sessions.values.toList();
+  /// 正式下载会话（在线播放会话不进入下载管理列表）
+  List<TorrentSession> getAllSessions() =>
+      _sessions.values.where((s) => !s.isStreaming).toList();
 
   void dispose() {
     for (final session in _sessions.values) {

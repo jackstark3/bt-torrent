@@ -38,6 +38,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   bool _converted = false;
   bool _switchingToLocal = false;
   bool _disposed = false;
+  String? _bufferingMessage;
 
   int? _lastPositionMs;
   int _trackedPiece = -1;
@@ -195,6 +196,24 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         numPieces: meta.numPieces,
       );
       if (!mounted) return;
+
+      // 等待开头数据就绪，避免播放器初始化时拿不到数据而失败
+      setState(() => _bufferingMessage = '正在缓冲开头数据...');
+      final buffered = await service.waitForInitialData(
+        infoHash: widget.infoHash,
+        pieceLength: meta.pieceLength,
+        bytesNeeded: 2 * 1024 * 1024, // 2MB
+      );
+      if (!mounted) return;
+      if (buffered.isError) {
+        setState(() {
+          _bufferingMessage = null;
+          _error = '在线播放失败：${buffered.error}';
+        });
+        ref.read(playerStateProvider.notifier).error('在线播放失败: ${buffered.error}');
+        return;
+      }
+      setState(() => _bufferingMessage = null);
 
       final controller =
           VideoPlayerController.networkUrl(Uri.parse(url));
@@ -452,6 +471,29 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                               color: Colors.white70),
                     ),
             ),
+
+            // 缓冲提示
+            if (_bufferingMessage != null)
+              Positioned(
+                bottom: 80,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      _bufferingMessage!,
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 13),
+                    ),
+                  ),
+                ),
+              ),
 
             // 控制层
             if (_showControls)

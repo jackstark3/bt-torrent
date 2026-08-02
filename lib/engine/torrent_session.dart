@@ -7,6 +7,7 @@ class TorrentSession {
   String name;
   final String? magnetUri;
   final String savePath;
+  bool isStreaming;
   final StreamController<TorrentProgress> _progressController;
   final StreamController<SessionStatus> _statusController;
 
@@ -18,6 +19,7 @@ class TorrentSession {
     required this.name,
     this.magnetUri,
     required this.savePath,
+    this.isStreaming = false,
   })  : _progressController = StreamController<TorrentProgress>.broadcast(),
         _statusController = StreamController<SessionStatus>.broadcast();
 
