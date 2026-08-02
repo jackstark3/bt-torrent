@@ -195,6 +195,7 @@ class TorrentEngine private constructor(private val context: Context) {
             // 等待元数据就绪（磁力链接从 DHT/peers 获取，最多 60 秒）
             val deadline = System.currentTimeMillis() + 60_000
             var handle = manager.find(hash)
+            var lastStatusLogMs = 0L
             while (handle == null || !handle.isValid || handle.torrentFile() == null) {
                 if (System.currentTimeMillis() >= deadline) {
                     // 超时：清理刚添加的 torrent，避免残留
@@ -205,7 +206,19 @@ class TorrentEngine private constructor(private val context: Context) {
                             Log.w(TAG, "清理超时 torrent 失败: $e")
                         }
                     }
-                    throw Exception("获取种子元数据超时")
+                    throw Exception("获取种子元数据超时：该资源可能无人做种")
+                }
+                // 每 5 秒记录一次连接状态，便于判断是资源无种还是网络问题
+                if (System.currentTimeMillis() - lastStatusLogMs >= 5000) {
+                    lastStatusLogMs = System.currentTimeMillis()
+                    val statusDesc = if (handle != null && handle.isValid) {
+                        val st = handle.status()
+                        "state=${st.state()} peers=${st.numPeers()} " +
+                            "seeds=${st.numSeeds()} rate=${st.downloadRate()}"
+                    } else {
+                        "handle 无效/未找到"
+                    }
+                    Log.i(TAG, "等待元数据中: $statusDesc")
                 }
                 delay(500)
                 handle = manager.find(hash)
