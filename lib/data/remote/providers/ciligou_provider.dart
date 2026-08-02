@@ -86,8 +86,7 @@ class CiliGouProvider extends SearchProvider {
           results.add(TorrentInfo(
             title: title,
             infoHash: hash,
-            magnetUri:
-                'magnet:?xt=urn:btih:$hash&dn=${Uri.encodeComponent(title)}',
+            magnetUri: ProviderUtils.buildMagnetWithTrackers(hash, title),
             sizeBytes: ProviderUtils.parseSize(sizeMatch?.group(1) ?? ''),
             seeders: 0, // 该站不提供做种数据
             leechers: 0,

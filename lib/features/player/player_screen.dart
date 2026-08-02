@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 
 import 'package:bt_torrent/core/models/download_task.dart';
+import 'package:bt_torrent/core/utils/error_text.dart';
 import 'package:bt_torrent/providers/core_providers.dart';
 import 'package:bt_torrent/providers/download_providers.dart';
 import 'package:bt_torrent/providers/playback_providers.dart';
@@ -139,8 +140,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       final controller = VideoPlayerController.file(File(path));
       await _prepareController(controller);
     } catch (e) {
-      setState(() => _error = '无法播放视频：$e');
-      ref.read(playerStateProvider.notifier).error('无法播放: $e');
+      setState(() => _error = '无法播放视频：${friendlyError(e)}');
+      ref
+          .read(playerStateProvider.notifier)
+          .error('无法播放: ${friendlyError(e)}');
     }
   }
 
@@ -231,8 +234,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           .execute(widget.infoHash, fileIndex: widget.fileIndex);
     } catch (e) {
       if (mounted) {
-        setState(() => _error = '在线播放失败：$e');
-        ref.read(playerStateProvider.notifier).error('在线播放失败: $e');
+        setState(() => _error = '在线播放失败：${friendlyError(e)}');
+        ref
+            .read(playerStateProvider.notifier)
+            .error('在线播放失败: ${friendlyError(e)}');
       }
     }
   }
@@ -250,8 +255,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       if (_disposed || !mounted) {
         controller.dispose();
       } else {
-        setState(() => _error = '无法播放视频：$e');
-        ref.read(playerStateProvider.notifier).error('无法播放: $e');
+        setState(() => _error = '无法播放视频：${friendlyError(e)}');
+        ref
+            .read(playerStateProvider.notifier)
+            .error('无法播放: ${friendlyError(e)}');
       }
       return;
     }

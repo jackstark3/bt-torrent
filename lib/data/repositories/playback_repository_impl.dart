@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:bt_torrent/core/models/playback_session.dart';
+import 'package:bt_torrent/core/utils/error_text.dart';
 import 'package:bt_torrent/core/utils/logger.dart';
 import 'package:bt_torrent/core/utils/magnet_parser.dart';
 import 'package:bt_torrent/core/utils/result.dart';
@@ -116,7 +117,7 @@ class PlaybackRepositoryImpl implements PlaybackRepository {
       return Result.success(playback);
     } catch (e) {
       _logger.error('启动在线播放失败', e);
-      return Result.error('$e');
+      return Result.error(friendlyError(e));
     }
   }
 
@@ -156,7 +157,7 @@ class PlaybackRepositoryImpl implements PlaybackRepository {
       return Result.success(updated);
     } catch (e) {
       _logger.error('恢复播放会话失败', e);
-      return Result.error('$e');
+      return Result.error(friendlyError(e));
     }
   }
 

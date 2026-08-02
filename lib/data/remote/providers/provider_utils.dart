@@ -2,6 +2,33 @@ import 'package:bt_torrent/core/models/torrent_info.dart';
 
 /// 搜索源爬虫共享工具
 class ProviderUtils {
+  /// 公共 tracker 列表（DHT 聚合站的裸磁力补上 tracker，提升连 peer 成功率）
+  static const List<String> publicTrackers = [
+    'udp://tracker.opentrackr.org:1337/announce',
+    'udp://open.stealth.si:80/announce',
+    'udp://tracker.torrent.eu.org:451/announce',
+    'udp://tracker.internetwarriors.net:1337/announce',
+    'udp://exodus.desync.com:6969/announce',
+    'http://p4p.arenabg.com:1337/announce',
+  ];
+
+  /// 根据 info_hash 构造带公共 tracker 的磁力链接
+  static String buildMagnetWithTrackers(String infoHash, String title) {
+    final buffer = StringBuffer('magnet:?xt=urn:btih:$infoHash');
+    if (title.isNotEmpty) {
+      buffer.write('&dn=${Uri.encodeComponent(title)}');
+    }
+    for (final tracker in publicTrackers) {
+      buffer.write('&tr=${Uri.encodeComponent(tracker)}');
+    }
+    return buffer.toString();
+  }
+
+  /// 磁力链接是否已带 tracker
+  static bool magnetHasTrackers(String magnet) {
+    return Uri.tryParse(magnet)?.queryParameters.containsKey('tr') ?? false;
+  }
+
   /// 解析 "2.5 GiB" / "1.2 GB" / "750 MB" 等大小字符串为字节
   static int parseSize(String sizeStr) {
     final match = RegExp(

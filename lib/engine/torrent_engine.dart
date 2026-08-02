@@ -1,3 +1,4 @@
+import 'package:bt_torrent/core/utils/error_text.dart';
 import 'package:bt_torrent/core/utils/logger.dart';
 import 'package:bt_torrent/core/utils/result.dart';
 import 'package:bt_torrent/core/models/download_task.dart';
@@ -53,7 +54,7 @@ class TorrentEngine {
       return Result.success(session);
     } catch (e) {
       _logger.error('启动下载失败', e);
-      return Result.error('$e');
+      return Result.error(friendlyError(e));
     }
   }
 
@@ -63,7 +64,7 @@ class TorrentEngine {
       _sessions[infoHash]?.pause();
       return Result.success(null);
     } catch (e) {
-      return Result.error('$e');
+      return Result.error(friendlyError(e));
     }
   }
 
@@ -73,7 +74,7 @@ class TorrentEngine {
       _sessions[infoHash]?.resume();
       return Result.success(null);
     } catch (e) {
-      return Result.error('$e');
+      return Result.error(friendlyError(e));
     }
   }
 
@@ -86,7 +87,7 @@ class TorrentEngine {
       _sessions.remove(infoHash)?.close();
       return Result.success(null);
     } catch (e) {
-      return Result.error('$e');
+      return Result.error(friendlyError(e));
     }
   }
 
@@ -99,7 +100,7 @@ class TorrentEngine {
       await _hostApi.setPiecePriority(infoHash, pieceIndex, priority);
       return Result.success(null);
     } catch (e) {
-      return Result.error('$e');
+      return Result.error(friendlyError(e));
     }
   }
 
@@ -112,7 +113,7 @@ class TorrentEngine {
       await _hostApi.setPieceDeadline(infoHash, pieceIndex, millis);
       return Result.success(null);
     } catch (e) {
-      return Result.error('$e');
+      return Result.error(friendlyError(e));
     }
   }
 
@@ -124,7 +125,7 @@ class TorrentEngine {
       final data = await _hostApi.readPiece(infoHash, pieceIndex);
       return Result.success(data);
     } catch (e) {
-      return Result.error('$e');
+      return Result.error(friendlyError(e));
     }
   }
 
@@ -141,7 +142,7 @@ class TorrentEngine {
               ))
           .toList());
     } catch (e) {
-      return Result.error('$e');
+      return Result.error(friendlyError(e));
     }
   }
 
@@ -152,7 +153,7 @@ class TorrentEngine {
       return Result.success(meta);
     } catch (e) {
       _logger.error('获取种子元数据失败', e);
-      return Result.error('$e');
+      return Result.error(friendlyError(e));
     }
   }
 
@@ -163,7 +164,7 @@ class TorrentEngine {
       return Result.success(null);
     } catch (e) {
       _logger.error('转存下载任务失败', e);
-      return Result.error('$e');
+      return Result.error(friendlyError(e));
     }
   }
 

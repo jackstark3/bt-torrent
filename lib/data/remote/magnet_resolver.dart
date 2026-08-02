@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 
 import 'package:bt_torrent/core/utils/logger.dart';
+import 'package:bt_torrent/data/remote/providers/provider_utils.dart';
 
 /// 从种子详情页解析磁力链接
 /// 1337x 等源在列表页不提供磁力，需要进详情页提取
@@ -31,7 +32,13 @@ class MagnetResolver {
       final html = response.data as String? ?? '';
       final match = RegExp(r'magnet:\?xt=urn:btih:[A-Fa-f0-9]{40}[^"\s<>]*')
           .firstMatch(html);
-      final magnet = match?.group(0);
+      var magnet = match?.group(0);
+      // 详情页磁力若无 tracker，补上公共 tracker，提升下载/播放成功率
+      if (magnet != null && !ProviderUtils.magnetHasTrackers(magnet)) {
+        magnet = '$magnet${ProviderUtils.publicTrackers
+            .map((t) => '&tr=${Uri.encodeComponent(t)}')
+            .join()}';
+      }
       _cache[detailUrl] = magnet;
       if (magnet == null) {
         _logger.warning('详情页未找到磁力: $detailUrl');
