@@ -6,6 +6,7 @@ import 'package:bt_torrent/core/models/download_task.dart';
 import 'package:bt_torrent/core/models/torrent_info.dart';
 import 'package:bt_torrent/core/utils/extensions.dart';
 import 'package:bt_torrent/core/utils/magnet_parser.dart';
+import 'package:bt_torrent/data/remote/search_aggregator.dart';
 import 'package:bt_torrent/features/search/widgets/search_bar.dart' as custom;
 import 'package:bt_torrent/features/search/widgets/torrent_card.dart';
 import 'package:bt_torrent/providers/core_providers.dart';
@@ -25,6 +26,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _focusNode = FocusNode();
   TorrentCategory? _selectedCategory;
   SortBy _sortBy = SortBy.seeders;
+  String _sourceFilter = '全部'; // 来源筛选，默认全部
   List<String> _suggestions = [];
 
   @override
@@ -233,6 +235,20 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     );
   }
 
+  /// 按来源筛选结果（"全部"不过滤）
+  List<TorrentInfo> _visibleResults(AggregatedResult result) {
+    if (_sourceFilter == '全部') return result.results;
+    return result.results
+        .where((t) => t.sourceProvider == _sourceFilter)
+        .toList();
+  }
+
+  /// 当前启用的搜索源名称（用于筛选下拉）
+  List<String> _enabledSources() =>
+      ref.read(searchAggregatorProvider).enabledProviders
+          .map((p) => p.name)
+          .toList();
+
   @override
   Widget build(BuildContext context) {
     final searchResults = ref.watch(searchResultsProvider);
@@ -333,11 +349,35 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   const Spacer(),
                   searchResults.when(
                     data: (r) {
+                      final visible = _visibleResults(r);
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
+                          // 来源筛选（默认"全部"）
+                          DropdownButtonHideUnderline(
+                            child: DropdownButton<String>(
+                              value: _sourceFilter,
+                              isDense: true,
+                              style: theme.textTheme.bodySmall,
+                              underline: const SizedBox.shrink(),
+                              icon: const Icon(Icons.filter_list, size: 16),
+                              items: [
+                                const DropdownMenuItem(
+                                    value: '全部', child: Text('全部')),
+                                ..._enabledSources()
+                                    .map((s) => DropdownMenuItem(
+                                        value: s, child: Text(s))),
+                              ],
+                              onChanged: (v) {
+                                if (v != null) {
+                                  setState(() => _sourceFilter = v);
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 2),
                           Text(
-                            '${r.resultCount} 个结果，${r.successCount} 个源',
+                            '${visible.length} 个结果，${r.successCount} 个源',
                             style: theme.textTheme.bodySmall?.copyWith(
                                 color: theme.colorScheme.onSurfaceVariant),
                           ),
@@ -380,6 +420,29 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                       ),
                     );
                   }
+                  final visible = _visibleResults(result);
+                  if (visible.isEmpty) {
+                    return Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.filter_alt_off,
+                              size: 56,
+                              color: theme.colorScheme.onSurfaceVariant),
+                          const SizedBox(height: 12),
+                          Text('"$_sourceFilter" 来源暂无搜索结果',
+                              style: TextStyle(
+                                  color: theme.colorScheme.onSurfaceVariant)),
+                          const SizedBox(height: 4),
+                          TextButton(
+                            onPressed: () =>
+                                setState(() => _sourceFilter = '全部'),
+                            child: const Text('查看全部'),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
                   return RefreshIndicator(
                     onRefresh: () async {
                       final query = ref.read(searchQueryProvider).query;
@@ -390,10 +453,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     child: ListView.builder(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 8),
-                      itemCount: result.results.length +
+                      itemCount: visible.length +
                           (result.isComplete && !result.hasMore ? 0 : 1),
                       itemBuilder: (context, index) {
-                        if (index >= result.results.length) {
+                        if (index >= visible.length) {
                           if (!result.isComplete || result.isLoadingMore) {
                             return const Center(
                                 child: Padding(
@@ -416,7 +479,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                           }
                           return const SizedBox.shrink();
                         }
-                        final torrent = result.results[index];
+                        final torrent = visible[index];
                         return TorrentCard(
                           torrent: torrent,
                           onTap: () {
