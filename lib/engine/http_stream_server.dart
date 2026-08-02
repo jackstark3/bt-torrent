@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -35,6 +34,9 @@ class PieceNotReadyException implements Exception {
 /// 将在线播放会话的 piece 数据通过 HTTP Range 请求提供给视频播放器
 class HttpStreamServer {
   final AppLogger _logger = AppLogger('HttpStreamServer');
+
+  /// 单次响应最大字节数（开放区间请求按此分块，避免阻塞整个文件）
+  static const int _maxChunkBytes = 8 * 1024 * 1024; // 8MB
 
   HttpServer? _server;
   int _port = 0;
@@ -151,11 +153,8 @@ class HttpStreamServer {
         return _handleRangeRequest(source, fileSize, rangeHeader);
       }
 
-      // 无 Range 头 — 分块返回整个文件
-      return Response.ok(
-        _readAll(source, fileSize),
-        headers: baseHeaders,
-      );
+      // 无 Range 头 — 按从头开始的开放区间处理（ExoPlayer 初始请求）
+      return _handleRangeRequest(source, fileSize, 'bytes=0-');
     } on PieceNotReadyException catch (e) {
       _logger.warning('piece 未就绪: $e');
       return Response(503, body: '数据未就绪，请稍后重试');
@@ -197,10 +196,12 @@ class HttpStreamServer {
         end = fileSize - 1;
       } else {
         start = int.parse(startStr);
-        end = (endStr != null && endStr.isNotEmpty)
-            ? int.parse(endStr)
-            : fileSize - 1;
-        end = min(end, fileSize - 1);
+        if (endStr == null || endStr.isEmpty) {
+          // 开放区间：限制单次响应大小，剩余部分由客户端继续 Range 请求
+          end = min(start + _maxChunkBytes - 1, fileSize - 1);
+        } else {
+          end = min(int.parse(endStr), fileSize - 1);
+        }
       }
 
       if (start >= fileSize || start > end) {
@@ -208,9 +209,12 @@ class HttpStreamServer {
       }
 
       final length = end - start + 1;
-      _logger.debug('Range: bytes $start-$end/$fileSize');
 
+      final sw = Stopwatch()..start();
       final data = await source.readRange(start, end);
+      sw.stop();
+      _logger.info(
+          'GET bytes=$start-$end/$fileSize -> ${data.length}B ${sw.elapsedMilliseconds}ms');
 
       return Response(
         206, // Partial Content
@@ -236,17 +240,6 @@ class HttpStreamServer {
     return Response(416,
         body: 'Range Not Satisfiable',
         headers: {'Content-Range': 'bytes */$fileSize'});
-  }
-
-  /// 分块读取整个文件（无 Range 请求时）
-  Stream<Uint8List> _readAll(StreamDataSource source, int fileSize) async* {
-    const chunk = 1 << 20; // 1MB
-    var pos = 0;
-    while (pos < fileSize) {
-      final end = min(pos + chunk - 1, fileSize - 1);
-      yield await source.readRange(pos, end);
-      pos = end + 1;
-    }
   }
 
   /// 停止服务器

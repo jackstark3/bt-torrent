@@ -31,12 +31,13 @@ class PlayerScreen extends ConsumerStatefulWidget {
 class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   VideoPlayerController? _controller;
   bool _showControls = true;
-  bool _isLandscape = false;
+  bool _isLandscape = true; // 默认横屏
   String? _error;
   String _fileName = '';
   bool _usingLocalFile = false;
   bool _converted = false;
   bool _switchingToLocal = false;
+  bool _disposed = false;
 
   int? _lastPositionMs;
   int _trackedPiece = -1;
@@ -46,6 +47,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   @override
   void initState() {
     super.initState();
+    // 进入播放器默认横屏
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (widget.streaming) {
         _initStreamingPlayer();
@@ -57,20 +63,28 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   @override
   void dispose() {
+    _disposed = true;
+    _progressSub?.cancel();
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
-    _progressSub?.cancel();
-    if (widget.streaming) {
-      final service = ref.read(streamingServiceProvider);
-      unawaited(service.stopStreaming(
-        widget.infoHash,
-        fileIndex: widget.fileIndex,
-      ));
+    try {
+      if (widget.streaming) {
+        final service = ref.read(streamingServiceProvider);
+        unawaited(service.stopStreaming(
+          widget.infoHash,
+          fileIndex: widget.fileIndex,
+        ));
+      }
+    } catch (_) {
+      // 播放器销毁时不能因 provider 异常中断控制器释放
     }
-    _controller?.dispose();
+    final controller = _controller;
+    _controller = null;
+    controller?.pause();
+    controller?.dispose();
     super.dispose();
   }
 
@@ -206,9 +220,24 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   /// 准备播放控制器（初始化 + 播放 + 进度联动）
   Future<void> _prepareController(VideoPlayerController controller) async {
-    await controller.initialize();
-    await controller.setLooping(false);
-    if (!mounted) {
+    // 立即持有引用：初始化期间退出播放器也必须能释放，否则音频会继续播放
+    _controller = controller;
+    if (mounted) setState(() {});
+
+    try {
+      await controller.initialize();
+      await controller.setLooping(false);
+    } catch (e) {
+      if (_disposed || !mounted) {
+        controller.dispose();
+      } else {
+        setState(() => _error = '无法播放视频：$e');
+        ref.read(playerStateProvider.notifier).error('无法播放: $e');
+      }
+      return;
+    }
+
+    if (_disposed || !mounted) {
       controller.dispose();
       return;
     }
@@ -300,7 +329,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       await local.initialize();
       await local.seekTo(position);
       if (wasPlaying) await local.play();
-      if (!mounted) {
+      if (_disposed || !mounted) {
         local.dispose();
         return;
       }
@@ -371,6 +400,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         : '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
+  /// 安全的视频宽高比（初始化阶段可能为 0/1，避免画面被拉伸）
+  double _safeAspectRatio(VideoPlayerController controller) {
+    final size = controller.value.size;
+    if (size.width > 0 && size.height > 0) {
+      return size.width / size.height;
+    }
+    final ratio = controller.value.aspectRatio;
+    return ratio > 0.1 ? ratio : 16 / 9;
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
@@ -386,7 +425,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
               child: controller != null && controller.value.isInitialized
                   ? Center(
                       child: AspectRatio(
-                        aspectRatio: controller.value.aspectRatio,
+                        aspectRatio: _safeAspectRatio(controller),
                         child: VideoPlayer(controller),
                       ),
                     )
