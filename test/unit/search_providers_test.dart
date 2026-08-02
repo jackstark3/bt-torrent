@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:bt_torrent/core/models/torrent_info.dart';
 import 'package:bt_torrent/data/remote/providers/leetx_provider.dart';
+import 'package:bt_torrent/data/remote/providers/ciligou_provider.dart';
 import 'package:bt_torrent/data/remote/providers/piratebay_provider.dart';
 import 'package:bt_torrent/data/remote/providers/provider_utils.dart';
 import 'package:bt_torrent/data/remote/providers/solidtorrents_provider.dart';
@@ -51,6 +52,25 @@ const leetxHtml = '''
 </tr>
 </tbody>
 </table>
+</body></html>
+''';
+
+const ciligouHtml = '''
+<html><body>
+<ul id="Search_list_wrapper">
+<li>
+  <div class="Search_title_wrapper"><div class="SearchListTitle_list_title">
+    <a class="SearchListTitle_result_title" href="/information/cc36bc02bada18ed55c888d06733ddecfed59f6f">(10-06) [TGIRLSXXX] Ivory Mayhem &amp; <em>Rick</em> Fuck Hard</a>
+  </div></div>
+  <div class="Search_list_info"><span class="Search_result_type"><i class="iconfont icon-citie Search_icon_citie"></i>4198</span><em>文件大小：</em>1003.25 MB<em>创建时间：</em>2023-10-06<em>文件格式：</em>.mp4</div>
+</li>
+<li>
+  <div class="Search_title_wrapper"><div class="SearchListTitle_list_title">
+    <a class="SearchListTitle_result_title" href="/information/ddc6717c303faa746311f9d406e89e1001bee055">SeeHimFuck.23.01.21.Malina.Melendez.And.Rick.Waters.XXX.1080p.MP4</a>
+  </div></div>
+  <div class="Search_list_info"><span class="Search_result_type"><i class="iconfont icon-citie Search_icon_citie"></i>9536</span><em>文件大小：</em>3.48 GB<em>创建时间：</em>2023-01-27<em>文件格式：</em>.mp4</div>
+</li>
+</ul>
 </body></html>
 ''';
 
@@ -176,6 +196,29 @@ void main() {
       expect(items.first.leechers, 56);
       expect(items.first.sizeBytes, 2684354560);
       expect(items.first.sourceProvider, '1337x');
+    });
+  });
+
+  group('CiliGouProvider', () {
+    test('解析搜索结果 HTML 并拼出磁力链接', () async {
+      final provider = CiliGouProvider(fakeDio(() => ciligouHtml));
+      final result = await provider.search(query: 'rick', category: null);
+
+      expect(result.isSuccess, isTrue);
+      final items = result.value!;
+      expect(items, hasLength(2));
+
+      final first = items.first;
+      expect(first.title, '(10-06) [TGIRLSXXX] Ivory Mayhem & Rick Fuck Hard');
+      expect(first.infoHash, 'cc36bc02bada18ed55c888d06733ddecfed59f6f');
+      expect(first.magnetUri,
+          startsWith('magnet:?xt=urn:btih:cc36bc02bada18ed55c888d06733ddecfed59f6f'));
+      expect(first.sizeBytes, closeTo(1003.25 * 1024 * 1024, 2));
+      expect(first.addedDate, DateTime(2023, 10, 6));
+      expect(first.sourceProvider, '磁力狗');
+      expect(first.isVerified, isTrue);
+
+      expect(items[1].sizeBytes, closeTo(3.48 * 1024 * 1024 * 1024, 2));
     });
   });
 
