@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bt_torrent/core/models/search_query.dart';
 import 'package:bt_torrent/core/models/torrent_info.dart';
+import 'package:bt_torrent/core/utils/title_matcher.dart';
 import 'package:bt_torrent/data/remote/search_aggregator.dart';
 import 'package:bt_torrent/providers/core_providers.dart';
 
@@ -60,9 +61,12 @@ class SearchNotifier extends AsyncNotifier<AggregatedResult> {
       if (last.results.isEmpty) {
         final cached =
             await ref.read(searchRepositoryProvider).searchCached(query);
-        if (cached.isNotEmpty) {
+        final matched = cached
+            .where((r) => TitleMatcher.matches(r.title, query))
+            .toList();
+        if (matched.isNotEmpty) {
           state = AsyncData(AggregatedResult(
-            results: cached,
+            results: matched,
             sourceStatuses: const {},
             isComplete: true,
             isCached: true,

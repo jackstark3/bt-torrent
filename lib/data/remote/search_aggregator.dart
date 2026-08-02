@@ -2,6 +2,7 @@ import 'package:bt_torrent/core/models/search_query.dart';
 import 'package:bt_torrent/core/models/torrent_info.dart';
 import 'package:bt_torrent/core/utils/logger.dart';
 import 'package:bt_torrent/core/utils/result.dart';
+import 'package:bt_torrent/core/utils/title_matcher.dart';
 import 'package:bt_torrent/data/remote/search_provider.dart';
 
 /// 多源并行搜索聚合器
@@ -91,7 +92,13 @@ class SearchAggregator {
       }
 
       // 流式返回中间结果
-      final sorted = _sortResults(allResults, query.sortBy);
+      final queryText = query.query.trim();
+      final filtered = queryText.isEmpty
+          ? allResults
+          : allResults
+              .where((r) => TitleMatcher.matches(r.title, queryText))
+              .toList();
+      final sorted = _sortResults(filtered, query.sortBy, queryText);
       yield AggregatedResult(
         results: List.unmodifiable(sorted),
         sourceStatuses: Map.unmodifiable(sourceStatuses),
@@ -128,7 +135,11 @@ class SearchAggregator {
   }
 
   /// 排序结果
-  List<TorrentInfo> _sortResults(List<TorrentInfo> results, SortBy sortBy) {
+  List<TorrentInfo> _sortResults(
+    List<TorrentInfo> results,
+    SortBy sortBy,
+    String query,
+  ) {
     final sorted = List<TorrentInfo>.from(results);
     switch (sortBy) {
       case SortBy.seeders:
@@ -144,8 +155,13 @@ class SearchAggregator {
           return bDate.compareTo(aDate);
         });
       case SortBy.relevance:
-        // 默认按做种数排
-        sorted.sort((a, b) => b.seeders.compareTo(a.seeders));
+        // 按标题匹配度打分排序，同分时按做种数
+        sorted.sort((a, b) {
+          final scoreCompare = TitleMatcher.score(b.title, query)
+              .compareTo(TitleMatcher.score(a.title, query));
+          if (scoreCompare != 0) return scoreCompare;
+          return b.seeders.compareTo(a.seeders);
+        });
     }
     return sorted;
   }
