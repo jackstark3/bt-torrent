@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:bt_torrent/core/models/torrent_info.dart';
 import 'package:bt_torrent/data/remote/providers/leetx_provider.dart';
 import 'package:bt_torrent/data/remote/providers/ciligou_provider.dart';
+import 'package:bt_torrent/data/remote/providers/sokitty_provider.dart';
 import 'package:bt_torrent/data/remote/providers/piratebay_provider.dart';
 import 'package:bt_torrent/data/remote/providers/provider_utils.dart';
 import 'package:bt_torrent/data/remote/providers/solidtorrents_provider.dart';
@@ -71,6 +72,18 @@ const ciligouHtml = '''
   <div class="Search_list_info"><span class="Search_result_type"><i class="iconfont icon-citie Search_icon_citie"></i>9536</span><em>文件大小：</em>3.48 GB<em>创建时间：</em>2023-01-27<em>文件格式：</em>.mp4</div>
 </li>
 </ul>
+</body></html>
+''';
+
+const sokittyHtml = '''
+<html><body>
+<div class="panel panel-default search-panel">
+  <div class="panel-heading pbc"><h3 class="panel-title">
+    <a class="list-title" href="/bt/fa79381cd9c63a71468c0f7e7db5d83923b67edf">onlyfans-KittyxKum---<em>Spider</em>-Girl-Cosplay-Squirt</a>
+  </h3></div>
+  <div class="panel-body"><ul class="list-unstyled" style="margin-bottom:0;"><li class="list-file"><span><i class="fa fa-file-video-o"></i>KittyxKum---Spider-Girl-Cosplay-Squirt.mp4</span> <span class="badge2">944.99MB</span></li></ul></div>
+  <div class="panel-footer pbc">文件大小: <span class="info-item">947.25 MB</span>文件数量: <span class="info-item">1</span>收录时间: <span class="info-item">2024-04-11</span></div>
+</div>
 </body></html>
 ''';
 
@@ -219,6 +232,27 @@ void main() {
       expect(first.isVerified, isTrue);
 
       expect(items[1].sizeBytes, closeTo(3.48 * 1024 * 1024 * 1024, 2));
+    });
+  });
+
+  group('SoKittyProvider', () {
+    test('解析搜索结果 HTML 并拼出磁力链接', () async {
+      final provider = SoKittyProvider(fakeDio(() => sokittyHtml));
+      final result = await provider.search(query: 'spider', category: null);
+
+      expect(result.isSuccess, isTrue);
+      final items = result.value!;
+      expect(items, hasLength(1));
+
+      final first = items.first;
+      expect(first.title, 'onlyfans-KittyxKum---Spider-Girl-Cosplay-Squirt');
+      expect(first.infoHash, 'fa79381cd9c63a71468c0f7e7db5d83923b67edf');
+      expect(first.magnetUri,
+          startsWith('magnet:?xt=urn:btih:fa79381cd9c63a71468c0f7e7db5d83923b67edf'));
+      expect(first.sizeBytes, closeTo(947.25 * 1024 * 1024, 2));
+      expect(first.addedDate, DateTime(2024, 4, 11));
+      expect(first.sourceProvider, 'SoKitty');
+      expect(first.isVerified, isTrue);
     });
   });
 

@@ -10,6 +10,7 @@ import 'package:bt_torrent/data/local/database.dart';
 import 'package:bt_torrent/data/remote/providers/leetx_provider.dart';
 import 'package:bt_torrent/data/remote/providers/piratebay_provider.dart';
 import 'package:bt_torrent/data/remote/providers/ciligou_provider.dart';
+import 'package:bt_torrent/data/remote/providers/sokitty_provider.dart';
 import 'package:bt_torrent/data/remote/providers/solidtorrents_provider.dart';
 import 'package:bt_torrent/data/remote/providers/torrentgalaxy_provider.dart';
 import 'package:bt_torrent/data/remote/providers/torznab_provider.dart';
@@ -75,6 +76,7 @@ final searchProvidersProvider = Provider<List<SearchProvider>>((ref) {
     LeetXProvider(dio),
     PirateBayProvider(dio),
     CiliGouProvider(dio),
+    SoKittyProvider(dio),
     SolidTorrentsProvider(dio),
     TorrentGalaxyProvider(dio),
   ];
