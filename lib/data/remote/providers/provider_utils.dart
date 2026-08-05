@@ -1,4 +1,5 @@
 import 'package:bt_torrent/core/models/torrent_info.dart';
+import 'package:bt_torrent/core/utils/magnet_parser.dart';
 
 /// 搜索源爬虫共享工具
 class ProviderUtils {
@@ -68,10 +69,12 @@ class ProviderUtils {
   /// 从磁力链接提取 info_hash
   static String? extractHashFromMagnet(String magnet) {
     final match = RegExp(
-      r'btih:([a-fA-F0-9]{40})',
+      r'btih:([A-Za-z0-9]{32,40})',
       caseSensitive: false,
     ).firstMatch(magnet);
-    return match?.group(1)?.toLowerCase();
+    final raw = match?.group(1);
+    if (raw == null) return null;
+    return MagnetParser.normalizeInfoHash(raw);
   }
 
   /// 根据标题粗判分类

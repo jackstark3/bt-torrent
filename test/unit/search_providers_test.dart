@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:bt_torrent/core/models/torrent_info.dart';
 import 'package:bt_torrent/core/models/search_query.dart';
+import 'package:bt_torrent/core/utils/magnet_parser.dart';
 import 'package:bt_torrent/core/utils/result.dart';
 import 'package:bt_torrent/data/remote/search_aggregator.dart';
 import 'package:bt_torrent/data/remote/search_provider.dart';
@@ -9,6 +10,8 @@ import 'package:bt_torrent/providers/search_providers.dart';
 import 'package:bt_torrent/data/remote/providers/leetx_provider.dart';
 import 'package:bt_torrent/data/remote/providers/ciligou_provider.dart';
 import 'package:bt_torrent/data/remote/providers/sokitty_provider.dart';
+import 'package:bt_torrent/data/remote/providers/dmhy_provider.dart';
+import 'package:bt_torrent/data/remote/providers/animetosho_provider.dart';
 import 'package:bt_torrent/data/remote/providers/piratebay_provider.dart';
 import 'package:bt_torrent/data/remote/providers/provider_utils.dart';
 import 'package:bt_torrent/data/remote/providers/solidtorrents_provider.dart';
@@ -133,6 +136,30 @@ const sokittyHtml = '''
   </h3></div>
   <div class="panel-body"><ul class="list-unstyled" style="margin-bottom:0;"><li class="list-file"><span><i class="fa fa-file-video-o"></i>KittyxKum---Spider-Girl-Cosplay-Squirt.mp4</span> <span class="badge2">944.99MB</span></li></ul></div>
   <div class="panel-footer pbc">文件大小: <span class="info-item">947.25 MB</span>文件数量: <span class="info-item">1</span>收录时间: <span class="info-item">2024-04-11</span></div>
+</div>
+</body></html>
+''';
+
+const dmhyRss = '''
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+<item>
+<title><![CDATA[[Skymoon-Raws][One Piece 海賊王][1172][ViuTV][WEB-RIP][1080p][MKV]]]></title>
+<link>http://share.dmhy.org/topics/view/724131.html</link>
+<pubDate>Tue, 04 Aug 2026 01:15:48 +0800</pubDate>
+<enclosure url="magnet:?xt=urn:btih:J4IFTS3RXW4BKDFNGDDSK35JRYLM2J7C&amp;dn=&amp;tr=http%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce" length="0" type="application/x-bittorrent"/>
+</item>
+</channel>
+</rss>
+''';
+
+const animetoshoHtml = '''
+<html><body>
+<div class="home_list_entry">
+  <div class="size" title="Total file size: 2,012,372,487 bytes">1.874 GB</div>
+  <div class="link"><a href="https://animetosho.org/view/one-piece-vol002.n2106671">One.Piece.Vol002.DVDRip.480p.x265<wbr/>.Multi-uP</a></div>
+  <div class="links"><a href="magnet:?xt=urn:btih:PDJTN7UDSTJTYMLDI7FWSWCVSAUEFDZA&amp;tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&amp;dn=One.Piece">Magnet</a> <span title="Seeders: 2 / Leechers: 10" style="color: #808080;">[2&#8593;/10&#8595;]</span></div>
 </div>
 </body></html>
 ''';
@@ -366,6 +393,53 @@ void main() {
       expect(first.addedDate, DateTime(2024, 4, 11));
       expect(first.sourceProvider, 'SoKitty');
       expect(first.isVerified, isTrue);
+    });
+  });
+
+  group('DmhyProvider', () {
+    test('解析 RSS 并归一化 base32 磁力哈希', () async {
+      final provider = DmhyProvider(fakeDio(() => dmhyRss));
+      final result = await provider.search(query: 'one piece', category: null);
+
+      expect(result.isSuccess, isTrue);
+      final items = result.value!;
+      expect(items, hasLength(1));
+
+      final first = items.first;
+      expect(first.title, contains('One Piece'));
+      expect(first.infoHash, hasLength(40));
+      expect(RegExp(r'^[a-f0-9]{40}$').hasMatch(first.infoHash), isTrue);
+      expect(first.magnetUri, startsWith('magnet:?xt=urn:btih:'));
+      expect(first.sourceProvider, '动漫花园');
+      expect(first.isVerified, isTrue);
+    });
+
+    test('base32 归一化为 40 位十六进制', () {
+      final hex = MagnetParser.normalizeInfoHash(
+          'J4IFTS3RXW4BKDFNGDDSK35JRYLM2J7C');
+      expect(hex, isNotNull);
+      expect(hex!.length, 40);
+      expect(RegExp(r'^[a-f0-9]{40}$').hasMatch(hex), isTrue);
+    });
+  });
+
+  group('AnimeToshoProvider', () {
+    test('解析搜索结果（含做种数）', () async {
+      final provider = AnimeToshoProvider(fakeDio(() => animetoshoHtml));
+      final result = await provider.search(query: 'one piece', category: null);
+
+      expect(result.isSuccess, isTrue);
+      final items = result.value!;
+      expect(items, hasLength(1));
+
+      final first = items.first;
+      expect(first.title, 'One.Piece.Vol002.DVDRip.480p.x265.Multi-uP');
+      expect(first.infoHash, hasLength(40));
+      expect(first.magnetUri, contains('urn:btih:'));
+      expect(first.seeders, 2);
+      expect(first.leechers, 10);
+      expect(first.sizeBytes, closeTo(1.874 * 1024 * 1024 * 1024, 2));
+      expect(first.sourceProvider, 'AnimeTosho');
     });
   });
 

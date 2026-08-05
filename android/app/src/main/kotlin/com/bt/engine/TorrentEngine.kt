@@ -247,10 +247,32 @@ class TorrentEngine private constructor(private val context: Context) {
         }
     }
 
-    /** 从磁力链接提取 info_hash（40 位十六进制，v1） */
+    /** 从磁力链接提取 info_hash（兼容 40 位十六进制与 32 位 base32） */
     private fun extractInfoHash(magnetUri: String): String? {
-        val m = Regex("xt=urn:btih:([A-Fa-f0-9]{40})").find(magnetUri)
-        return m?.groupValues?.get(1)?.lowercase()
+        val m = Regex("xt=urn:btih:([A-Za-z0-9]{32,40})").find(magnetUri)
+            ?: return null
+        val raw = m.groupValues[1]
+        if (raw.length == 40) return raw.lowercase()
+        return base32ToHex(raw)
+    }
+
+    /** 32 位 base32 → 40 位十六进制小写 */
+    private fun base32ToHex(input: String): String? {
+        val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+        val bits = StringBuilder()
+        for (ch in input.uppercase()) {
+            val v = alphabet.indexOf(ch)
+            if (v < 0) return null
+            bits.append(v.toString(2).padStart(5, '0'))
+        }
+        val bytes = mutableListOf<Byte>()
+        var i = 0
+        while (i + 8 <= bits.length) {
+            bytes.add(bits.substring(i, i + 8).toInt(2).toByte())
+            i += 8
+        }
+        if (bytes.size != 20) return null
+        return bytes.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
     }
 
     /** 暂停下载 */
