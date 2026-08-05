@@ -81,10 +81,8 @@ class StreamingService {
     }
     final lastPiece = (bytesNeeded - 1) ~/ pieceLength;
 
-    // 等待上限按最低预期速度（4KB/s）推算：大 piece 需要更久，
-    // 下限 90 秒、上限 10 分钟
-    final estimatedSeconds = pieceLength ~/ 4096;
-    final timeoutSeconds = estimatedSeconds.clamp(90, 600).toInt();
+    // 固定等待上限：1 分钟，超时提示换种子（不按 piece 大小无限等待）
+    const timeoutSeconds = 60;
     final deadline = DateTime.now().add(Duration(seconds: timeoutSeconds));
     _logger.info(
         '等待开头数据: 需 $lastPiece 个 piece, 等待上限 ${timeoutSeconds}s');
@@ -133,7 +131,7 @@ class StreamingService {
       }
       await Future.delayed(const Duration(milliseconds: 500));
     }
-    return Result.error('缓冲超时：该资源下载速度过低，可能需要很长时间才能开始播放');
+    return Result.error('速度过低，建议更换种子播放');
   }
 
   /// 结束在线播放（某个文件或整个会话）
