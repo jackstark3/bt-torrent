@@ -15,6 +15,7 @@ class StreamingService {
 
   final Map<String, StreamManager> _managers = {};
   final Map<String, int> _refCounts = {};
+  DateTime _lastWaitLog = DateTime.fromMillisecondsSinceEpoch(0);
 
   StreamingService(this._engine) : _server = HttpStreamServer();
 
@@ -90,7 +91,19 @@ class StreamingService {
       }
       if (ready) {
         _logger.info('开头 $bytesNeeded 字节已就绪，开始播放');
+        // 开头数据就绪后再优先尾部元数据（moov/cues）
+        await _managers[infoHash]?.prioritizeTail(infoHash);
         return Result.success(null);
+      }
+
+      // 诊断日志：每 10 秒记录连接与下载状态
+      if (DateTime.now().difference(_lastWaitLog).inSeconds >= 10) {
+        _lastWaitLog = DateTime.now();
+        final session = _engine.getSession(infoHash);
+        final p = session?.currentProgress;
+        _logger.info(
+            '等待开头数据: peers=${p?.connectedPeers ?? 0} seeds=${p?.connectedSeeds ?? 0} '
+            'speed=${p?.downloadSpeed ?? 0} downloaded=${p?.downloadedBytes ?? 0}');
       }
       await Future.delayed(const Duration(milliseconds: 500));
     }

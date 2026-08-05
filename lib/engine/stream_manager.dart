@@ -54,6 +54,11 @@ class StreamManager {
 
     _logger.info('初始化流媒体: $totalPieces pieces, ${pieceSize}bytes/piece');
     await _updatePriorities(infoHash);
+  }
+
+  /// 优先尾部元数据 piece（moov/cues 常在文件末尾）
+  /// 在开头数据就绪后再调用，避免抢走开头下载的带宽
+  Future<void> prioritizeTail(String infoHash) async {
     await _prioritizeTail(infoHash);
   }
 
