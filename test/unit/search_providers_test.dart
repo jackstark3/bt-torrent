@@ -5,6 +5,7 @@ import 'package:bt_torrent/core/models/search_query.dart';
 import 'package:bt_torrent/core/utils/result.dart';
 import 'package:bt_torrent/data/remote/search_aggregator.dart';
 import 'package:bt_torrent/data/remote/search_provider.dart';
+import 'package:bt_torrent/providers/search_providers.dart';
 import 'package:bt_torrent/data/remote/providers/leetx_provider.dart';
 import 'package:bt_torrent/data/remote/providers/ciligou_provider.dart';
 import 'package:bt_torrent/data/remote/providers/sokitty_provider.dart';
@@ -249,6 +250,29 @@ void main() {
       expect(result.results, hasLength(1));
       expect(result.results.first.sourceProvider, '源A');
       expect(result.results.first.additionalSources, contains('源B'));
+    });
+
+    test('跨批次合并保留同主来源的附加来源', () {
+      const hash = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      final base = TorrentInfo(
+        title: 'Test',
+        infoHash: hash,
+        sizeBytes: 1,
+        seeders: 1,
+        leechers: 0,
+        sourceProvider: '磁力狗',
+      );
+      // 第二批次的同资源已由聚合器标上 SoKitty 归属（主来源仍是磁力狗）
+      final withAttribution = base.copyWith(
+        additionalSources: const ['SoKitty'],
+      );
+
+      final merged = <String, TorrentInfo>{};
+      mergeTorrentSources(merged, [base]);
+      mergeTorrentSources(merged, [withAttribution]);
+
+      expect(merged[hash]!.sourceProvider, '磁力狗');
+      expect(merged[hash]!.additionalSources, contains('SoKitty'));
     });
   });
 

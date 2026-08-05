@@ -149,17 +149,7 @@ class SearchNotifier extends AsyncNotifier<AggregatedResult> {
   }
 
   void _mergeResults(List<TorrentInfo> results) {
-    for (final t in results) {
-      final existing = _byHash[t.infoHash];
-      if (existing == null) {
-        _byHash[t.infoHash] = t;
-      } else if (existing.sourceProvider != t.sourceProvider &&
-          !existing.additionalSources.contains(t.sourceProvider)) {
-        _byHash[t.infoHash] = existing.copyWith(
-          additionalSources: [...existing.additionalSources, t.sourceProvider],
-        );
-      }
-    }
+    mergeTorrentSources(_byHash, results);
   }
 
   AggregatedResult _mergedResult(
@@ -187,6 +177,35 @@ class SearchNotifier extends AsyncNotifier<AggregatedResult> {
   Future<void> addToHistory(String query) async {
     final searchRepo = ref.read(searchRepositoryProvider);
     await searchRepo.addSearchHistory(query);
+  }
+}
+
+/// 把 [results] 合并进 [byHash]（按 infoHash 去重），并保留多来源归属。
+/// 即使主来源相同，也会并入新数据的附加来源。
+void mergeTorrentSources(
+  Map<String, TorrentInfo> byHash,
+  List<TorrentInfo> results,
+) {
+  for (final t in results) {
+    final existing = byHash[t.infoHash];
+    if (existing == null) {
+      byHash[t.infoHash] = t;
+      continue;
+    }
+    final combined = <String>[...existing.additionalSources];
+    void addIfNew(String s) {
+      if (s != existing.sourceProvider && !combined.contains(s)) {
+        combined.add(s);
+      }
+    }
+
+    addIfNew(t.sourceProvider);
+    for (final s in t.additionalSources) {
+      addIfNew(s);
+    }
+    if (combined.isNotEmpty) {
+      byHash[t.infoHash] = existing.copyWith(additionalSources: combined);
+    }
   }
 }
 
