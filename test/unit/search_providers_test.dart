@@ -9,6 +9,7 @@ import 'package:bt_torrent/data/remote/search_provider.dart';
 import 'package:bt_torrent/providers/search_providers.dart';
 import 'package:bt_torrent/data/remote/providers/leetx_provider.dart';
 import 'package:bt_torrent/data/remote/providers/ciligou_provider.dart';
+import 'package:bt_torrent/data/remote/providers/cilimao_provider.dart';
 import 'package:bt_torrent/data/remote/providers/sokitty_provider.dart';
 import 'package:bt_torrent/data/remote/providers/dmhy_provider.dart';
 import 'package:bt_torrent/data/remote/providers/animetosho_provider.dart';
@@ -123,6 +124,25 @@ const ciligouHtml = '''
     <a class="SearchListTitle_result_title" href="/information/ddc6717c303faa746311f9d406e89e1001bee055">SeeHimFuck.23.01.21.Malina.Melendez.And.Rick.Waters.XXX.1080p.MP4</a>
   </div></div>
   <div class="Search_list_info"><span class="Search_result_type"><i class="iconfont icon-citie Search_icon_citie"></i>9536</span><em>文件大小：</em>3.48 GB<em>创建时间：</em>2023-01-27<em>文件格式：</em>.mp4</div>
+</li>
+</ul>
+</body></html>
+''';
+
+const cilimaoHtml = '''
+<html><body>
+<ul id="Search_list_wrapper">
+<li>
+  <div class="Search_title_wrapper"><div class="SearchListTitle_list_title">
+    <a style="border-bottom:none;" href="/magnet_download/8fb2b02f7f826f5ad24f5902477ec7d8c74c38d6.html" class="SearchListTitle_result_title"><font color="red">rick</font>.and.Morty.S08E05.Cryo.Mort.a.<font color="red">rick</font>ver.1080p.MAX.WEB-DL.DDP5.1.H.264-FLUX</a>
+  </div></div>
+  <div class="Search_list_info"><span class="Search_result_type"><i class="iconfont icon-citie Search_icon_citie"></i>69</span><em>文件大小：</em>467.21 MB<em>创建时间：</em>10个月前<em>文件数量：</em>2<em>文件类型：</em>视频</div>
+</li>
+<li>
+  <div class="Search_title_wrapper"><div class="SearchListTitle_list_title">
+    <a style="border-bottom:none;" href="/magnet_download/50bea9dc1f3e151d127f3d640dcd9f34b28f093b.html" class="SearchListTitle_result_title">Orange Tree Samples 8211 Evolution <font color="red">rick</font> 12 v125 KONTAKT.exe</a>
+  </div></div>
+  <div class="Search_list_info"><span class="Search_result_type"><i class="iconfont icon-citie Search_icon_citie"></i>31</span><em>文件大小：</em>78.97 KB<em>创建时间：</em>10个月前<em>文件数量：</em>未知<em>文件类型：</em>软件</div>
 </li>
 </ul>
 </body></html>
@@ -372,6 +392,37 @@ void main() {
       expect(first.isVerified, isTrue);
 
       expect(items[1].sizeBytes, closeTo(3.48 * 1024 * 1024 * 1024, 2));
+    });
+  });
+
+  group('CiliMaoProvider', () {
+    test('关键词按 UTF-8 转 hex', () {
+      expect(CiliMaoProvider.encodeKeywordHex('rick'), '7269636b');
+      expect(CiliMaoProvider.encodeKeywordHex('麻豆'), 'e9babbe8b186');
+      expect(CiliMaoProvider.encodeKeywordHex('  spider  '), '737069646572');
+    });
+
+    test('解析搜索结果 HTML 并拼出磁力链接', () async {
+      final provider = CiliMaoProvider(fakeDio(() => cilimaoHtml));
+      final result = await provider.search(query: 'rick', category: null);
+
+      expect(result.isSuccess, isTrue);
+      final items = result.value!;
+      expect(items, hasLength(2));
+
+      final first = items.first;
+      expect(first.title,
+          'rick.and.Morty.S08E05.Cryo.Mort.a.rickver.1080p.MAX.WEB-DL.DDP5.1.H.264-FLUX');
+      expect(first.infoHash, '8fb2b02f7f826f5ad24f5902477ec7d8c74c38d6');
+      expect(first.magnetUri,
+          startsWith('magnet:?xt=urn:btih:8fb2b02f7f826f5ad24f5902477ec7d8c74c38d6'));
+      expect(first.sizeBytes, closeTo(467.21 * 1024 * 1024, 2));
+      expect(first.completedDownloads, 69);
+      expect(first.sourceProvider, '磁力猫');
+      expect(first.isVerified, isTrue);
+
+      expect(items[1].sizeBytes, closeTo(78.97 * 1024, 2));
+      expect(items[1].completedDownloads, 31);
     });
   });
 
