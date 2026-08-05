@@ -206,6 +206,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         infoHash: widget.infoHash,
         pieceLength: meta.pieceLength,
         bytesNeeded: 2 * 1024 * 1024, // 2MB
+        onProgress: (status) {
+          if (mounted) {
+            setState(() => _bufferingMessage = status);
+          }
+        },
       );
       if (!mounted) return;
       if (buffered.isError) {

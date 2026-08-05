@@ -16,6 +16,7 @@ class StreamingService {
   final Map<String, StreamManager> _managers = {};
   final Map<String, int> _refCounts = {};
   DateTime _lastWaitLog = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastProgressCall = DateTime.fromMillisecondsSinceEpoch(0);
 
   StreamingService(this._engine) : _server = HttpStreamServer();
 
@@ -73,13 +74,22 @@ class StreamingService {
     required String infoHash,
     required int pieceLength,
     required int bytesNeeded,
-    Duration timeout = const Duration(seconds: 90),
+    void Function(String status)? onProgress,
   }) async {
     if (pieceLength <= 0 || bytesNeeded <= 0) {
       return Result.success(null);
     }
     final lastPiece = (bytesNeeded - 1) ~/ pieceLength;
-    final deadline = DateTime.now().add(timeout);
+
+    // 等待上限按最低预期速度（4KB/s）推算：大 piece 需要更久，
+    // 下限 90 秒、上限 10 分钟
+    final estimatedSeconds = pieceLength ~/ 4096;
+    final timeoutSeconds = estimatedSeconds.clamp(90, 600).toInt();
+    final deadline = DateTime.now().add(Duration(seconds: timeoutSeconds));
+    _logger.info(
+        '等待开头数据: 需 $lastPiece 个 piece, 等待上限 ${timeoutSeconds}s');
+
+    var lastDataTime = DateTime.now();
     while (DateTime.now().isBefore(deadline)) {
       var ready = true;
       for (int p = 0; p <= lastPiece; p++) {
@@ -96,18 +106,34 @@ class StreamingService {
         return Result.success(null);
       }
 
-      // 诊断日志：每 10 秒记录连接与下载状态
+      final session = _engine.getSession(infoHash);
+      final prog = session?.currentProgress;
+      final speed = prog?.downloadSpeed ?? 0;
+      final peers = prog?.connectedPeers ?? 0;
+
+      // 完全没有任何连接且没有数据流入超过 30 秒 → 死种
+      if (speed == 0 && peers == 0 &&
+          DateTime.now().difference(lastDataTime).inSeconds >= 30) {
+        return Result.error('没有连接到做种者，该资源可能无人做种');
+      }
+      if (speed > 0 || peers > 0) {
+        lastDataTime = DateTime.now();
+      }
+
+      // 实时状态（5 秒一次）与诊断日志
       if (DateTime.now().difference(_lastWaitLog).inSeconds >= 10) {
         _lastWaitLog = DateTime.now();
-        final session = _engine.getSession(infoHash);
-        final p = session?.currentProgress;
-        _logger.info(
-            '等待开头数据: peers=${p?.connectedPeers ?? 0} seeds=${p?.connectedSeeds ?? 0} '
-            'speed=${p?.downloadSpeed ?? 0} downloaded=${p?.downloadedBytes ?? 0}');
+        _logger.info('等待开头数据: peers=$peers seeds=${prog?.connectedSeeds ?? 0} '
+            'speed=$speed downloaded=${prog?.downloadedBytes ?? 0}');
+      }
+      if (DateTime.now().difference(_lastProgressCall).inSeconds >= 1) {
+        _lastProgressCall = DateTime.now();
+        onProgress?.call('正在缓冲开头数据… $peers 个做种者 '
+            '${(speed / 1024).toStringAsFixed(1)}KB/s');
       }
       await Future.delayed(const Duration(milliseconds: 500));
     }
-    return Result.error('等待开头数据超时，可能没有做种者');
+    return Result.error('缓冲超时：该资源下载速度过低，可能需要很长时间才能开始播放');
   }
 
   /// 结束在线播放（某个文件或整个会话）
