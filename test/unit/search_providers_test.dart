@@ -1,6 +1,10 @@
 import 'dart:typed_data';
 
 import 'package:bt_torrent/core/models/torrent_info.dart';
+import 'package:bt_torrent/core/models/search_query.dart';
+import 'package:bt_torrent/core/utils/result.dart';
+import 'package:bt_torrent/data/remote/search_aggregator.dart';
+import 'package:bt_torrent/data/remote/search_provider.dart';
 import 'package:bt_torrent/data/remote/providers/leetx_provider.dart';
 import 'package:bt_torrent/data/remote/providers/ciligou_provider.dart';
 import 'package:bt_torrent/data/remote/providers/sokitty_provider.dart';
@@ -33,6 +37,51 @@ class FakeAdapter implements HttpClientAdapter {
 
   @override
   void close({bool force = false}) {}
+}
+
+/// 聚合测试用假搜索源
+class _FakeProvider extends SearchProvider {
+  final String providerName;
+  final List<TorrentInfo> results;
+
+  _FakeProvider(this.providerName, this.results);
+
+  @override
+  String get name => providerName;
+
+  @override
+  String get id => providerName;
+
+  @override
+  String get baseUrl => 'https://fake.example';
+
+  @override
+  bool get isEnabled => true;
+
+  @override
+  bool get supportsCategories => false;
+
+  @override
+  bool get supportsSorting => false;
+
+  @override
+  Future<Result<List<TorrentInfo>>> search({
+    required String query,
+    TorrentCategory? category,
+    SortBy sortBy = SortBy.seeders,
+    int page = 1,
+  }) async {
+    return Result.success(results);
+  }
+
+  @override
+  Future<bool> healthCheck() async => true;
+
+  @override
+  String? getCategoryPath(TorrentCategory category) => null;
+
+  @override
+  String? getSortParam(SortBy sortBy) => null;
 }
 
 /// 构造返回固定内容的 Dio
@@ -163,6 +212,46 @@ const torznabXml = '''
 ''';
 
 void main() {
+  group('SearchAggregator', () {
+    test('聚合去重保留多来源归属', () async {
+      const hash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      final torrentA = TorrentInfo(
+        title: 'Test Movie',
+        infoHash: hash,
+        sizeBytes: 100,
+        seeders: 1,
+        leechers: 0,
+        sourceProvider: '源A',
+      );
+      final torrentB = TorrentInfo(
+        title: 'Test Movie',
+        infoHash: hash,
+        sizeBytes: 100,
+        seeders: 1,
+        leechers: 0,
+        sourceProvider: '源B',
+      );
+      final aggregator = SearchAggregator([
+        _FakeProvider('源A', [torrentA]),
+        _FakeProvider('源B', [torrentB]),
+      ]);
+
+      AggregatedResult? last;
+      await for (final r in aggregator.searchStream(
+          const SearchQuery(query: 'test'))) {
+        last = r;
+      }
+
+      final result =
+          last ??
+          const AggregatedResult(
+              results: [], sourceStatuses: {}, isComplete: true);
+      expect(result.results, hasLength(1));
+      expect(result.results.first.sourceProvider, '源A');
+      expect(result.results.first.additionalSources, contains('源B'));
+    });
+  });
+
   group('ProviderUtils', () {
     test('parseSize 支持各种单位', () {
       expect(ProviderUtils.parseSize('512 B'), 512);

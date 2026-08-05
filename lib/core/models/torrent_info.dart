@@ -14,6 +14,8 @@ class TorrentInfo {
   final String? posterUrl;
   final DateTime? addedDate;
   final bool isVerified;
+  /// 同一种子还被哪些源收录（去重后保留多来源归属）
+  final List<String> additionalSources;
 
   const TorrentInfo({
     required this.title,
@@ -30,7 +32,44 @@ class TorrentInfo {
     this.posterUrl,
     this.addedDate,
     this.isVerified = false,
+    this.additionalSources = const [],
   });
+
+  TorrentInfo copyWith({
+    String? title,
+    String? infoHash,
+    String? magnetUri,
+    String? torrentUrl,
+    int? sizeBytes,
+    int? seeders,
+    int? leechers,
+    int? completedDownloads,
+    TorrentCategory? category,
+    String? sourceProvider,
+    String? detailUrl,
+    String? posterUrl,
+    DateTime? addedDate,
+    bool? isVerified,
+    List<String>? additionalSources,
+  }) {
+    return TorrentInfo(
+      title: title ?? this.title,
+      infoHash: infoHash ?? this.infoHash,
+      magnetUri: magnetUri ?? this.magnetUri,
+      torrentUrl: torrentUrl ?? this.torrentUrl,
+      sizeBytes: sizeBytes ?? this.sizeBytes,
+      seeders: seeders ?? this.seeders,
+      leechers: leechers ?? this.leechers,
+      completedDownloads: completedDownloads ?? this.completedDownloads,
+      category: category ?? this.category,
+      sourceProvider: sourceProvider ?? this.sourceProvider,
+      detailUrl: detailUrl ?? this.detailUrl,
+      posterUrl: posterUrl ?? this.posterUrl,
+      addedDate: addedDate ?? this.addedDate,
+      isVerified: isVerified ?? this.isVerified,
+      additionalSources: additionalSources ?? this.additionalSources,
+    );
+  }
 
   String get sizeFormatted {
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];

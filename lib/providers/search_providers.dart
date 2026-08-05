@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bt_torrent/core/models/search_query.dart';
 import 'package:bt_torrent/core/models/torrent_info.dart';
+import 'package:bt_torrent/core/utils/logger.dart';
 import 'package:bt_torrent/data/remote/search_aggregator.dart';
 import 'package:bt_torrent/providers/core_providers.dart';
 
@@ -16,6 +17,7 @@ final searchResultsProvider =
 );
 
 class SearchNotifier extends AsyncNotifier<AggregatedResult> {
+  final AppLogger _logger = AppLogger('SearchNotifier');
   final Map<String, TorrentInfo> _byHash = {};
   SearchQuery? _activeQuery;
   int _page = 1;
@@ -98,6 +100,14 @@ class SearchNotifier extends AsyncNotifier<AggregatedResult> {
         state = AsyncData(_mergedResult(last, isLoadingMore: _loadingMore));
       }
 
+      // 诊断：合并结果按来源分布
+      final distribution = <String, int>{};
+      for (final t in _byHash.values) {
+        distribution[t.sourceProvider] =
+            (distribution[t.sourceProvider] ?? 0) + 1;
+      }
+      _logger.info('合并结果分布: $distribution');
+
       if (append) {
         _page = searchQuery.page;
         state = AsyncData(_mergedResult(
@@ -140,7 +150,15 @@ class SearchNotifier extends AsyncNotifier<AggregatedResult> {
 
   void _mergeResults(List<TorrentInfo> results) {
     for (final t in results) {
-      _byHash.putIfAbsent(t.infoHash, () => t);
+      final existing = _byHash[t.infoHash];
+      if (existing == null) {
+        _byHash[t.infoHash] = t;
+      } else if (existing.sourceProvider != t.sourceProvider &&
+          !existing.additionalSources.contains(t.sourceProvider)) {
+        _byHash[t.infoHash] = existing.copyWith(
+          additionalSources: [...existing.additionalSources, t.sourceProvider],
+        );
+      }
     }
   }
 

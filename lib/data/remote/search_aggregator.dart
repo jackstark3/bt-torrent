@@ -49,7 +49,7 @@ class SearchAggregator {
     }
 
     final allResults = <TorrentInfo>[];
-    final seenHashes = <String>{};
+    final byHash = <String, TorrentInfo>{};
     final sourceStatuses = <String, SourceStatus>{};
     int completedCount = 0;
 
@@ -75,11 +75,23 @@ class SearchAggregator {
 
         // 去重合并
         for (final item in results) {
-          if (!seenHashes.contains(item.infoHash)) {
-            seenHashes.add(item.infoHash);
-            allResults.add(item);
+          final existing = byHash[item.infoHash];
+          if (existing == null) {
+            byHash[item.infoHash] = item;
+          } else if (existing.sourceProvider != item.sourceProvider &&
+              !existing.additionalSources.contains(item.sourceProvider)) {
+            // 同一资源被多个源收录：保留多来源归属，避免筛选时丢失
+            byHash[item.infoHash] = existing.copyWith(
+              additionalSources: [
+                ...existing.additionalSources,
+                item.sourceProvider,
+              ],
+            );
           }
         }
+        allResults
+          ..clear()
+          ..addAll(byHash.values);
 
         _logger.info('${providerResult.providerName}: ${results.length} 条结果');
       } else {

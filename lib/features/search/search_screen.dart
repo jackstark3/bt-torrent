@@ -238,9 +238,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   /// 按来源筛选结果（"全部"不过滤）
   List<TorrentInfo> _visibleResults(AggregatedResult result) {
     if (_sourceFilter == '全部') return result.results;
-    return result.results
-        .where((t) => t.sourceProvider == _sourceFilter)
-        .toList();
+    final filter = _sourceFilter.trim();
+    final filtered = result.results.where((t) {
+      if (t.sourceProvider.trim() == filter) return true;
+      return t.additionalSources.any((s) => s.trim() == filter);
+    }).toList();
+    debugPrint(
+        '[来源筛选] 总数=${result.results.length} 筛选=$_sourceFilter 匹配=${filtered.length}');
+    return filtered;
   }
 
   /// 当前启用的搜索源名称（用于筛选下拉）

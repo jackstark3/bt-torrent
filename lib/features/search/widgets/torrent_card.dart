@@ -61,7 +61,9 @@ class TorrentCard extends StatelessWidget {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
-                      torrent.sourceProvider,
+                      torrent.additionalSources.isNotEmpty
+                          ? '${torrent.sourceProvider} +${torrent.additionalSources.length}'
+                          : torrent.sourceProvider,
                       style: theme.textTheme.labelSmall?.copyWith(
                         color: theme.colorScheme.onSecondaryContainer,
                       ),
